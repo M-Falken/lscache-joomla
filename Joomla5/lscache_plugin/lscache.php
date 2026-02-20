@@ -1663,6 +1663,7 @@ class plgSystemLSCache extends CMSPlugin {
     }
 
     private function crawlUrls($urls, $output = true) {
+        $prevTimeLimit = (int) ini_get('max_execution_time');
         set_time_limit(0);
 
         $cli = false;
@@ -1728,7 +1729,6 @@ class plgSystemLSCache extends CMSPlugin {
             
             $buffer = curl_exec($ch);
             $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
             $this->log( $root.$url);
 
             if (in_array($httpcode, $acceptCode)) {
@@ -1782,6 +1782,9 @@ class plgSystemLSCache extends CMSPlugin {
         } else {
             $msg = str_replace('%d', $totalTime, Text::_('COM_LSCACHE_PLUGIN_PAGERECACHOVERTIME'));
         }
+        if ($prevTimeLimit > 0) {
+            set_time_limit($prevTimeLimit);
+        }
         return $msg;
     }
 
@@ -1815,7 +1818,6 @@ class plgSystemLSCache extends CMSPlugin {
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             $buffer = curl_exec($ch);
             $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
         }
 
         if (!empty($httpcode) && in_array($httpcode, array(200, 201))) {

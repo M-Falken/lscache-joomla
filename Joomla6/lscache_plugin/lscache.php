@@ -1025,12 +1025,17 @@ class plgSystemLSCache extends CMSPlugin {
         $extensionID = $this->pageElements["id"];
         $file = $this->pageElements["file"];
         if ($purge && !empty($file) && !empty($extensionID)) {
-            $file = base64_decode($file);
-            $elements = explode('/', $file);
-            if (count($elements) < 3) {
+            $decoded = base64_decode($file, true);
+            if ($decoded === false || str_contains($decoded, '..') || str_contains($decoded, "\0")) {
                 $purge = false;
-            } else if ($elements[1] != "html") {
-                $purge = false;
+            } else {
+                $file = $decoded;
+                $elements = explode('/', $file);
+                if (count($elements) < 3) {
+                    $purge = false;
+                } else if ($elements[1] !== "html") {
+                    $purge = false;
+                }
             }
         }
 
@@ -1133,7 +1138,7 @@ class plgSystemLSCache extends CMSPlugin {
         $query = $db->createQuery()
                 ->select('*')
                 ->from('#__modules')
-                ->where($db->quoteName('module') . '="' . $element . '"')
+                ->where($db->quoteName('module') . '=' . $db->quote($element))
                 ->where($db->quoteName('published') . '=1');
 
         $db->setQuery($query);
@@ -1148,7 +1153,7 @@ class plgSystemLSCache extends CMSPlugin {
         $query = $db->createQuery()
                 ->select('*')
                 ->from('#__template_styles')
-                ->where($db->quoteName('template') . '="' . $element . '"');
+                ->where($db->quoteName('template') . '=' . $db->quote($element));
 
         $db->setQuery($query);
 
@@ -1356,7 +1361,7 @@ class plgSystemLSCache extends CMSPlugin {
         $cleancache = $app->input->get('cleanCache');
         if($ipPass && (!empty($cleancache))) {
             $cleanWords = $this->settings->get('cleanCache', 'purgeAllCache');
-            if ($cleancache != $cleanWords) {
+            if ($cleancache !== $cleanWords) {
                 http_response_code(403);
                 $app->close();
                 return;
@@ -1378,7 +1383,7 @@ class plgSystemLSCache extends CMSPlugin {
         $recache = $app->input->get('recache');
         if ($ipPass && (!empty($recache))) {
             $cleanWords = $this->settings->get('cleanCache', 'purgeAllCache');
-            if ($recache != $cleanWords) {
+            if ($recache !== $cleanWords) {
                 http_response_code(403);
                 $app->close();
                 return;
@@ -1937,26 +1942,12 @@ class plgSystemLSCache extends CMSPlugin {
 
    
     protected function getVisitorIP() {
-        $ip = '';
+        // Use only REMOTE_ADDR for security-sensitive IP checks (admin whitelist).
+        // HTTP_CLIENT_IP and HTTP_X_FORWARDED_FOR are client-controlled and can
+        // be spoofed to bypass IP restrictions.
         $jinput = Factory::getApplication()->input;
-        $ip = $jinput->server->get('REMOTE_ADDR');
-        
-        if ($jinput->server->get('HTTP_CLIENT_IP')) {
-            $ip = $jinput->server->get('HTTP_CLIENT_IP');
-        } else if($jinput->server->get('HTTP_X_FORWARDED_FOR')) {
-            $ip = $jinput->server->get('HTTP_X_FORWARDED_FOR');
-        } else if($jinput->server->get('HTTP_X_FORWARDED')) {
-            $ip = $jinput->server->get('HTTP_X_FORWARDED');
-        } else if($jinput->server->get('HTTP_FORWARDED_FOR')) {
-            $ip = $jinput->server->get('HTTP_FORWARDED_FOR');
-        } else if($jinput->server->get('HTTP_FORWARDED')) {
-            $ip = $jinput->server->get('HTTP_FORWARDED');
-        } else if($jinput->server->get('REMOTE_ADDR')) {
-            $ip = $jinput->server->get('REMOTE_ADDR');
-        } else if (getHostName()){
-            $ip = getHostByName(getHostName());
-        }
-        return $ip;
+        $ip = $jinput->server->getString('REMOTE_ADDR', '');
+        return filter_var($ip, FILTER_VALIDATE_IP) ? $ip : '';
     }
     
     protected function esiTokenForm(){

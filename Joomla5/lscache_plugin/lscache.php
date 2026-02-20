@@ -384,7 +384,15 @@ class plgSystemLSCache extends CMSPlugin {
         }
 
         if ($this->purgeObject->recacheAll) {
-            $this->recacheAction(true,true);
+            $this->purgeObject->recacheAll = false;
+            ignore_user_abort(true);
+            set_time_limit(0);
+            register_shutdown_function(\Closure::bind(function () {
+                if (function_exists('fastcgi_finish_request')) {
+                    fastcgi_finish_request();
+                }
+                $this->recacheAction(true, false);
+            }, $this, \get_class($this)));
             $this->app->redirect('index.php?option=com_lscache');
         }
 

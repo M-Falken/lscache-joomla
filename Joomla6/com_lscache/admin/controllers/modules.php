@@ -39,7 +39,10 @@ class LSCacheControllerModules extends AdminController {
 
     public function esi() {
 
-        Session::checkToken() or jexit(Text::_('JINVALID_TOKEN'));
+        if (!Session::checkToken()) {
+            Factory::getApplication()->enqueueMessage(Text::_('JINVALID_TOKEN'), 'error');
+            Factory::getApplication()->close(403);
+        }
 
         $pks = $this->input->post->get('cid', array(), 'array');
         $pks = ArrayHelper::toInteger($pks);
@@ -61,7 +64,10 @@ class LSCacheControllerModules extends AdminController {
     }
 
     public function normal() {
-        Session::checkToken() or jexit(Text::_('JINVALID_TOKEN'));
+        if (!Session::checkToken()) {
+            Factory::getApplication()->enqueueMessage(Text::_('JINVALID_TOKEN'), 'error');
+            Factory::getApplication()->close(403);
+        }
 
         $pks = $this->input->post->get('cid', array(), 'array');
         $pks = ArrayHelper::toInteger($pks);
@@ -83,8 +89,8 @@ class LSCacheControllerModules extends AdminController {
     }
 
     public function purgeall() {
-        JLoader::register('LiteSpeedCacheBase', JPATH_SITE . '/plugins/system/lscache/lscachebase.php', true);
-        JLoader::register('LiteSpeedCacheCore', JPATH_SITE . '/plugins/system/lscache/lscachecore.php', true);
+        require_once JPATH_SITE . '/plugins/system/lscache/lscachebase.php';
+        require_once JPATH_SITE . '/plugins/system/lscache/lscachecore.php';
         $lscInstance = new LiteSpeedCacheCore();
         $app = Factory::getApplication();
         $app->enqueueMessage(Text::_('COM_LSCACHE_PURGED_ALL'), "");
@@ -96,8 +102,8 @@ class LSCacheControllerModules extends AdminController {
         if (!isset($_SERVER['HTTP_REFERER'])) {
             return;
         }
-        JLoader::register('LiteSpeedCacheBase', JPATH_SITE . '/plugins/system/lscache/lscachebase.php', true);
-        JLoader::register('LiteSpeedCacheCore', JPATH_SITE . '/plugins/system/lscache/lscachecore.php', true);
+        require_once JPATH_SITE . '/plugins/system/lscache/lscachebase.php';
+        require_once JPATH_SITE . '/plugins/system/lscache/lscachecore.php';
         $lscInstance = new LiteSpeedCacheCore();
         $app = Factory::getApplication();
         $app->enqueueMessage(Text::_('COM_LSCACHE_PURGED_ALL'), "");
@@ -113,7 +119,10 @@ class LSCacheControllerModules extends AdminController {
     public function purgeModule() {
 
         $app = Factory::getApplication();
-        Session::checkToken() or jexit(Text::_('JINVALID_TOKEN'));
+        if (!Session::checkToken()) {
+            $app->enqueueMessage(Text::_('JINVALID_TOKEN'), 'error');
+            $app->close(403);
+        }
 
         $pks = $this->input->post->get('cid', array(), 'array');
         $pks = ArrayHelper::toInteger($pks);
@@ -133,7 +142,10 @@ class LSCacheControllerModules extends AdminController {
 
     public function purgeURL() {
 
-        Session::checkToken() or jexit(Text::_('JINVALID_TOKEN'));
+        if (!Session::checkToken()) {
+            Factory::getApplication()->enqueueMessage(Text::_('JINVALID_TOKEN'), 'error');
+            Factory::getApplication()->close(403);
+        }
         if (!isset($_POST['purgeURLs'])) {
             $app = Factory::getApplication();
             $app->enqueueMessage(Text::_('COM_LSCACHE_ERROR_NO_URLS_INPUT'));
@@ -157,9 +169,9 @@ class LSCacheControllerModules extends AdminController {
         $success = 0;
         $acceptCode = array(200, 201);
 
-        $domain = Uri::getinstance()->toString(['host']);
+        $domain = Uri::getInstance()->toString(['host']);
         $host = $_SERVER['SERVER_ADDR'];
-        $server = Uri::getinstance()->toString(['host', 'port']);
+        $server = Uri::getInstance()->toString(['host', 'port']);
         $header = ['Host: ' . $server];
         $msg = [];
 

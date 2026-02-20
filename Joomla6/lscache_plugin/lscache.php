@@ -101,20 +101,20 @@ class plgSystemLSCache extends CMSPlugin {
             define('LITESPEED_ESI_SUPPORT', LITESPEED_SERVER_TYPE !== 'LITESPEED_SERVER_OLS' ? true : false );
         }
 
-        JLoader::register('LiteSpeedCacheBase', __DIR__ . '/lscachebase.php', true);
-        JLoader::register('LiteSpeedCacheCore', __DIR__ . '/lscachecore.php', true);
+        require_once __DIR__ . '/lscachebase.php';
+        require_once __DIR__ . '/lscachecore.php';
         $this->lscInstance = new LiteSpeedCacheCore();
 
-        JLoader::register('LSCacheModuleBase', __DIR__ . '/modules/base.php', true);
-        JLoader::register('LSCacheModulesHelper', __DIR__ . '/modules/helper.php', true);
+        require_once __DIR__ . '/modules/base.php';
+        require_once __DIR__ . '/modules/helper.php';
         $this->moduleHelper = new LSCacheModulesHelper($this);
 
         if (!$this->app) {
             $this->app = Factory::getApplication();
         }
 
-        JLoader::register('LSCacheComponentBase', __DIR__ . '/components/base.php', true);
-        JLoader::register('LSCacheComponentsHelper', __DIR__ . '/components/helper.php', true);
+        require_once __DIR__ . '/components/base.php';
+        require_once __DIR__ . '/components/helper.php';
         $this->componentHelper = new LSCacheComponentsHelper($this);
 
         $this->purgeObject = (object) array('tags' => array(), 'urls' => array(), 'option' => "", 'idField' => "", 'ids' => array(), 'purgeAll' => false, 'recacheAll' => false);
@@ -1437,7 +1437,7 @@ class plgSystemLSCache extends CMSPlugin {
         $menuid = $app->getMenu()->getDefault()->id;
 
         if (($module->pages > 0) && (isset($_SERVER['HTTP_REFERER']))) {
-            $uri = Uri::getinstance();
+            $uri = Uri::getInstance();
             $uri->setPath("");
             $uri->setQuery("");
             $uri->setFragment(""); 
@@ -1452,7 +1452,7 @@ class plgSystemLSCache extends CMSPlugin {
             }
         } else if (($module->pages > 0) && ($menuItems = $this->getModuleMenuItems($moduleid)) && (!in_array($menuid, $menuItems))) {
             $menuid = $menuItems[0];
-            $uri = Uri::getinstance();
+            $uri = Uri::getInstance();
             $uri->setPath("");
             $uri->setQuery("");
             $uri->setFragment("");
@@ -1466,7 +1466,7 @@ class plgSystemLSCache extends CMSPlugin {
                 $root .= 'index.php';
             }
 
-            $uri = Uri::getinstance();
+            $uri = Uri::getInstance();
             $uri->setPath("");
             $uri->setQuery("");
             $uri->setFragment("");

@@ -175,38 +175,56 @@ class LSCacheControllerModules extends AdminController {
         $header = ['Host: ' . $server];
         $msg = [];
 
-        foreach ($slugs as $key => $path) {
-
-            // Check that URL is in this domain
-            if (strpos($path, $domain) === FALSE) {
+        // Build list of valid URLs and their original paths for reporting
+        $validPaths = [];
+        foreach ($slugs as $path) {
+            if (strpos($path, $domain) === false) {
                 $msg[] = $path . ' - ' . Text::_('COM_LSCACHE_URL_WRONG_DOMAIN');
                 continue;
             }
+            $validPaths[] = $path;
+        }
 
-            $ch = curl_init();
+        if (!empty($validPaths)) {
+            // Send all PURGE requests in parallel using curl_multi
+            $mh = curl_multi_init();
+            $handles = [];
 
-            // Replace domain with host, and set Header Host, to support Cloudflare or reverse proxies
-            $host_path = str_replace($domain, $host, $path);
-            curl_setopt($ch, CURLOPT_HTTPHEADER, $header);
-
-            curl_setopt($ch, CURLOPT_URL, $host_path);
-            curl_setopt($ch, CURLOPT_VERBOSE, true);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 3);
-            curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "PURGE");
-            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-
-            $buffer = curl_exec($ch);
-            $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-
-            if (in_array($httpcode, $acceptCode)) {
-                $success++;
-            } else {
-                $msg[] = $path . ' - ' . Text::_('COM_LSCACHE_URL_PURGE_FAIL') . $httpcode . curl_error($ch);
+            foreach ($validPaths as $path) {
+                // Replace domain with host IP to support Cloudflare or reverse proxies
+                $host_path = str_replace($domain, $host, $path);
+                $ch = curl_init();
+                curl_setopt($ch, CURLOPT_HTTPHEADER, $header);
+                curl_setopt($ch, CURLOPT_URL, $host_path);
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+                curl_setopt($ch, CURLOPT_TIMEOUT, 3);
+                curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PURGE');
+                curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                curl_multi_add_handle($mh, $ch);
+                $handles[$path] = $ch;
             }
 
-            curl_close($ch);
+            // Execute all handles simultaneously
+            do {
+                $status = curl_multi_exec($mh, $running);
+                if ($running) {
+                    curl_multi_select($mh);
+                }
+            } while ($running && $status === CURLM_OK);
+
+            // Collect results
+            foreach ($handles as $path => $ch) {
+                $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                if (in_array($httpcode, $acceptCode)) {
+                    $success++;
+                } else {
+                    $msg[] = $path . ' - ' . Text::_('COM_LSCACHE_URL_PURGE_FAIL') . $httpcode . curl_error($ch);
+                }
+                curl_multi_remove_handle($mh, $ch);
+            }
+
+            curl_multi_close($mh);
         }
 
         $msg[] = str_replace('%d', $success, Text::_('COM_LSCACHE_URL_PURGED'));

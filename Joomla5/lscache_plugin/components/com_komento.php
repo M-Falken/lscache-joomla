@@ -1,6 +1,7 @@
 <?php
+declare(strict_types=1);
 
-/* 
+/*
  *  @since      1.0.0
  *  @author     LiteSpeed Technologies <info@litespeedtech.com>
  *  @copyright  Copyright (c) 2017-2018 LiteSpeed Technologies, Inc. (https://www.litespeedtech.com)

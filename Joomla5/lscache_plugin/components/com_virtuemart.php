@@ -302,6 +302,10 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
             return $this->onContentPrepare($context->getArgument(0),$context->getArgument(1),$context->getArgument(2),$context->getArgument(3));
         }
 
+        if (!class_exists('VmModel')) {
+            return;
+        }
+
         $productModel = VmModel::getModel('Product');
         $total = $productModel->getTotal();
         $limitstart = $productModel->_limitStart;

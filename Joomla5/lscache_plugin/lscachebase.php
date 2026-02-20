@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 
 /**
  * General function of communicating with LSWS Server for LSCache operations,
@@ -64,7 +65,7 @@ class LiteSpeedCacheBase
                         
             $tagStr = $prefix . trim($tag);
             if(!in_array($tagStr, $tagArray, false)){
-                array_push($tagArray, $tagStr);
+                $tagArray[] = $tagStr;
             }
         }
     }
@@ -197,7 +198,7 @@ class LiteSpeedCacheBase
             $this->tagsForSite($siteTags, $privateTags);
         }
         else{
-            array_push($siteTags,  'pvt');
+            $siteTags[] = 'pvt';
         }
         
         $LSheader = $this->tagCommand( self::CACHE_TAG ,  $siteTags);

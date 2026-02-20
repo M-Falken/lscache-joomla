@@ -239,19 +239,19 @@ class LiteSpeedCacheBase
     {
         if ($value == "") {
             if (isset($_COOKIE[self::VARY_COOKIE])) {
-                setcookie(self::VARY_COOKIE, "", '0', $path);
+                setcookie(self::VARY_COOKIE, "", 0, $path);
                 return false;
             }
             return true;
         }
         
         if(!isset($_COOKIE[self::VARY_COOKIE])){
-            setcookie(self::VARY_COOKIE, $value, '0', $path);
+            setcookie(self::VARY_COOKIE, $value, 0, $path);
             return false;
         }
 
         if($_COOKIE[self::VARY_COOKIE] != $value){
-            setcookie(self::VARY_COOKIE, $value, '0', $path);
+            setcookie(self::VARY_COOKIE, $value, 0, $path);
             return false;
         }
         

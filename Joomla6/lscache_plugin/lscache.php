@@ -92,7 +92,7 @@ class plgSystemLSCache extends CMSPlugin {
         }
 
         // Checks if caching is allowed via server variable
-        if (!empty($_SERVER['X-LSCACHE']) || LITESPEED_SERVER_TYPE === 'LITESPEED_SERVER_ADC' || defined('LITESPEED_CLI')) {
+        if (!empty($_SERVER['HTTP_X_LSCACHE']) || LITESPEED_SERVER_TYPE === 'LITESPEED_SERVER_ADC' || defined('LITESPEED_CLI')) {
             !defined('LITESPEED_ALLOWED') && define('LITESPEED_ALLOWED', true);
         }
 
@@ -602,6 +602,7 @@ class plgSystemLSCache extends CMSPlugin {
         }
         
         $option = $this->getOption($context);
+        $purgeTags = '';
 
         $menu_contexts = array('com_menus.item', 'com_menus.menu');
         if (in_array($context, $menu_contexts)) {
@@ -1762,7 +1763,7 @@ class plgSystemLSCache extends CMSPlugin {
             usleep(round($diff));
         }
 
-        if($output & (!$break)){
+        if($output && (!$break)){
             echo '100%';
             if (ob_get_contents()){
                 ob_flush();
@@ -1791,6 +1792,7 @@ class plgSystemLSCache extends CMSPlugin {
             return;
         }
 
+        $httpcode = 0;
         if ((!$this->purgeObject->purgeAll) && ($this->purgeObject->autoRecache > 0)) {
             $root = Uri::root();
             $cleanWords = $this->settings->get('cleanCache', 'purgeAllCache');

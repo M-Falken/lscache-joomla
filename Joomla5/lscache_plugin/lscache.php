@@ -387,6 +387,15 @@ class plgSystemLSCache extends CMSPlugin {
             $this->purgeObject->recacheAll = false;
             ignore_user_abort(true);
             set_time_limit(0);
+            // Write initial progress so the admin page can start polling immediately
+            $progressFile = JPATH_ROOT . '/cache/lscache_rebuild_progress.json';
+            file_put_contents($progressFile, json_encode([
+                'status'  => 'starting',
+                'total'   => 0,
+                'current' => 0,
+                'success' => 0,
+                'started' => time(),
+            ]));
             register_shutdown_function(\Closure::bind(function () {
                 if (function_exists('fastcgi_finish_request')) {
                     fastcgi_finish_request();
@@ -1693,6 +1702,15 @@ class plgSystemLSCache extends CMSPlugin {
         $root = Uri::getInstance()->toString(array('scheme', 'host', 'port'));
         $recacheDuration = $this->settings->get('recacheDuration', 30) * 1000000;
         $break = false;
+        $progressFile    = JPATH_ROOT . '/cache/lscache_rebuild_progress.json';
+        $progressStarted = time();
+        file_put_contents($progressFile, json_encode([
+            'status'  => 'running',
+            'total'   => $count,
+            'current' => 0,
+            'success' => 0,
+            'started' => $progressStarted,
+        ]));
         if ($output) {
             //ob_implicit_flush(TRUE);
             echo '<h3>Rebuild LiteSpeed Cache may take several minutes</h3><br/>';
@@ -1752,6 +1770,16 @@ class plgSystemLSCache extends CMSPlugin {
             }
             $current++;
 
+            if ($current % 5 === 0 || $current === $count) {
+                file_put_contents($progressFile, json_encode([
+                    'status'  => 'running',
+                    'total'   => $count,
+                    'current' => $current,
+                    'success' => $success,
+                    'started' => $progressStarted,
+                ]));
+            }
+
             if ($output) {
             
                 echo 'curl url: ' . $root . '/' . $url . '<br/>' .  PHP_EOL;
@@ -1784,6 +1812,14 @@ class plgSystemLSCache extends CMSPlugin {
             flush();
         }
             
+        file_put_contents($progressFile, json_encode([
+            'status'   => 'completed',
+            'total'    => $count,
+            'current'  => $current,
+            'success'  => $success,
+            'started'  => $progressStarted,
+            'finished' => time(),
+        ]));
         $totalTime = round($this->microtimeMinus($begin, microtime()) / 1000000);
         if ($count == $current) {
             $msg = str_replace('%d', $totalTime, Text::_('COM_LSCACHE_PLUGIN_PAGERECACHED'));

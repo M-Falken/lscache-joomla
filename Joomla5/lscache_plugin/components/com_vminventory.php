@@ -1,0 +1,35 @@
+<?php
+
+/*
+ *  @since      1.5.3
+ *  @author     Grégory Roussel <siriusocteam@gmail.com>
+ *  @copyright  Copyright (c) 2026 Grégory Roussel
+ *  @license    https://opensource.org/licenses/GPL-3.0
+ *
+ *  com_vminventory (https://extensions.joomla.org/extension/vm-inventory/)
+ *  is a third-party admin component that modifies VirtueMart products via
+ *  direct SQL UPDATEs. When its controller dispatches plgVmAfterStoreProduct
+ *  to notify LSCache, the normal LSCache bootstrap path does not register the
+ *  com_virtuemart listeners (because the active $option is com_vminventory,
+ *  not com_virtuemart). This handler compensates by force-loading the VM
+ *  component handler and delegating its listener registration, so VM events
+ *  fired from com_vminventory are received as if they came from com_virtuemart
+ *  itself.
+ */
+
+class LSCacheComponentVmInventory extends LSCacheComponentBase
+{
+    public function onRegisterEvents()
+    {
+        $vmFile = __DIR__ . '/com_virtuemart.php';
+        if (!file_exists($vmFile)) {
+            return;
+        }
+        if (!class_exists('LSCacheComponentVirtueMart')) {
+            require_once $vmFile;
+        }
+        $vmHandler = new LSCacheComponentVirtueMart($this->dispatcher, array());
+        $vmHandler->init($this->dispatcher, $this->plugin);
+        $vmHandler->onRegisterEvents();
+    }
+}

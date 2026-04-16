@@ -111,8 +111,17 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
         if (!$ok) {
             return;
         }
-        
-        $id = $data['virtuemart_product_id'];
+
+        if (is_array($data)) {
+            $id = $data['virtuemart_product_id'] ?? null;
+        } elseif (is_object($data)) {
+            $id = $data->virtuemart_product_id ?? null;
+        } else {
+            $id = $data;
+        }
+        if (!$id) {
+            return;
+        }
         
         $category_tag = $this->getProductCategoryTags($id);
         $tag = "com_virtuemart, com_virtuemart.product:" . $id . $category_tag;

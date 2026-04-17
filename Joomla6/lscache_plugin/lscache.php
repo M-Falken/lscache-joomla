@@ -1727,7 +1727,8 @@ class plgSystemLSCache extends CMSPlugin {
         $curlMenus = array();
         if (!empty($menus) && is_array($menus)) {
             foreach ($menus as $menu) {
-                if (($menu->type != "alias")) {
+                // access > 1 = non-public (Registered/Special/...) → crawler anonyme = 403
+                if (($menu->type != "alias") && ((int)$menu->access <= 1)) {
                     $menu->path = $menu->link . '&Itemid=' . $menu->id;
                     if(!empty($menu->link)){
                         if($menu->language!="*"){

@@ -389,14 +389,32 @@ class plgSystemLSCache extends CMSPlugin {
             set_time_limit(0);
             $progressFile = JPATH_ROOT . '/cache/lscache_rebuild_progress.json';
 
-            // Collect URLs NOW while Joomla is fully initialised (getSiteMap needs the router)
+            // Collect URLs NOW while Joomla is fully initialised (getSiteMap + Route::link need
+            // the router AND the session). We pre-route every URL here so the shutdown handler
+            // never has to touch session/router (headers already sent = session_start() fails).
             try {
                 $menus     = $this->getSiteMap();
-                $crawlList = array_map(function ($m) { return $m->path; }, $menus);
+                $rawList   = array_map(function ($m) { return $m->path; }, $menus);
                 $recacheComponent = $this->settings->get('recacheComponent', false);
                 if ($recacheComponent) {
-                    $compUrls  = $this->componentHelper->getComMap($recacheComponent);
-                    $crawlList = array_merge($compUrls, $crawlList);
+                    $compUrls = $this->componentHelper->getComMap($recacheComponent);
+                    $rawList  = array_merge($compUrls, $rawList);
+                }
+
+                $crawlList = [];
+                foreach ($rawList as $path) {
+                    try {
+                        $routed = Route::link('site', $path);
+                        if (strpos($routed, '/component') === 0) {
+                            $routed = '/' . $path;
+                        }
+                        if ((strpos($routed, '[') !== false) && (strpos($routed, ']') !== false)) {
+                            $routed = substr($routed, 0, strpos($routed, '?'));
+                        }
+                        $crawlList[] = $routed;
+                    } catch (\Throwable $e) {
+                        continue;
+                    }
                 }
             } catch (\Throwable $e) {
                 $crawlList = [];
@@ -418,11 +436,12 @@ class plgSystemLSCache extends CMSPlugin {
                         fastcgi_finish_request();
                     }
                     try {
-                        $this->crawlUrls($crawlList, false);
+                        $this->crawlUrls($crawlList, false, true);
                     } catch (\Throwable $e) {
                         file_put_contents($pfClosure, json_encode([
-                            'status' => 'error',
-                            'error'  => $e->getMessage() . ' in ' . basename($e->getFile()) . ':' . $e->getLine(),
+                            'status'  => 'error',
+                            'error'   => $e->getMessage() . ' in ' . basename($e->getFile()) . ':' . $e->getLine(),
+                            'started' => time(),
                         ]));
                     }
                 }, $this, \get_class($this)));
@@ -1721,7 +1740,7 @@ class plgSystemLSCache extends CMSPlugin {
         return $curlMenus;
     }
 
-    private function crawlUrls($urls, $output = true) {
+    private function crawlUrls($urls, $output = true, $preRouted = false) {
         $prevTimeLimit = (int) ini_get('max_execution_time');
         set_time_limit(0);
 
@@ -1764,25 +1783,29 @@ class plgSystemLSCache extends CMSPlugin {
         
         foreach ($urls as $url) {
             $ch = curl_init();
-            if ($this->isAdmin()) {
-                try {
-                    $curlurl = Route::link("site",$url);
-                } catch (Error $ex) {
-                    $this->log($ex->getMessage());
-                    continue;
-                }
+            if ($preRouted) {
+                $curlurl = $url;
             } else {
-                $curlurl = Route::link("site",$url);
+                if ($this->isAdmin()) {
+                    try {
+                        $curlurl = Route::link("site",$url);
+                    } catch (Error $ex) {
+                        $this->log($ex->getMessage());
+                        continue;
+                    }
+                } else {
+                    $curlurl = Route::link("site",$url);
+                }
+
+                if(strpos($curlurl, '/component')===0){
+                    $curlurl ='/'.$url;
+                }
+
+                if((strpos($curlurl,'[')!==false) && (strpos($curlurl,']')!==false)){
+                    $curlurl = substr($curlurl, 0, strpos($curlurl,'?'));
+                }
             }
-            
-            if(strpos($curlurl, '/component')===0){
-                $curlurl ='/'.$url;
-            }
-            
-            if((strpos($curlurl,'[')!==false) && (strpos($curlurl,']')!==false)){
-                $curlurl = substr($curlurl, 0, strpos($curlurl,'?'));
-            }
-            
+
             curl_setopt($ch, CURLOPT_URL, $root.$curlurl);
             curl_setopt($ch, CURLOPT_HEADER, false);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);

@@ -1815,9 +1815,17 @@ class plgSystemLSCache extends CMSPlugin {
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
             curl_setopt($ch, CURLOPT_MAXREDIRS, 1);
-            curl_setopt($ch, CURLOPT_USERAGENT, 'lscache_runner');
+            // Browser-like UA keeps WAFs and security plugins happy while the
+            // "lscache_runner" suffix stays identifiable in server logs.
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (compatible; lscache_runner)');
             curl_setopt($ch, CURLOPT_ENCODING, "gzip");
             curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+            curl_setopt($ch, CURLOPT_REFERER, $root.'/');
+            curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+                'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language: fr-FR,fr;q=0.9,en;q=0.8',
+                'X-LSCACHE: 1',
+            ));
             $start = microtime();
             
             $buffer = curl_exec($ch);

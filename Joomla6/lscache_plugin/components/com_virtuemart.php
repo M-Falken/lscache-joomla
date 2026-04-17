@@ -249,6 +249,39 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
         $comUrls[] = 'index.php?option=com_virtuemart';
 
         $db = Factory::getDbo();
+
+        // Map category_id → Itemid from published frontend menu items bound to VM
+        // categories. Without an explicit Itemid, Route::link picks an arbitrary VM
+        // Itemid and VirtueMart returns 403 when the SEF path doesn't match the
+        // requested virtuemart_category_id.
+        $catItemid = array();
+        try {
+            $query = $db->createQuery()
+                    ->select($db->quoteName(array('id', 'link')))
+                    ->from('#__menu')
+                    ->where($db->quoteName('client_id') . ' = 0')
+                    ->where($db->quoteName('published') . ' = 1')
+                    ->where($db->quoteName('link') . ' LIKE ' . $db->quote('%option=com_virtuemart%view=category%virtuemart_category_id=%'));
+            $db->setQuery($query);
+            foreach ($db->loadObjectList() as $menu) {
+                $qs = '';
+                $pos = strpos($menu->link, '?');
+                if ($pos !== false) {
+                    $qs = substr($menu->link, $pos + 1);
+                }
+                $args = array();
+                parse_str($qs, $args);
+                if (!empty($args['virtuemart_category_id'])) {
+                    $cid = (int) $args['virtuemart_category_id'];
+                    if (!isset($catItemid[$cid])) {
+                        $catItemid[$cid] = (int) $menu->id;
+                    }
+                }
+            }
+        } catch (RuntimeException $ex) {
+            // continue with empty map — categories without menu will be skipped
+        }
+
         $query = $db->createQuery()
                 ->select('virtuemart_category_id')
                 ->from('#__virtuemart_categories');
@@ -256,7 +289,11 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
             $db->setQuery($query);
             $cateids = $db->loadColumn();
             foreach($cateids as $cateid){
-                $comUrls[] = 'index.php?option=com_virtuemart&view=category&virtuemart_category_id='.$cateid;
+                $cid = (int) $cateid;
+                if (!isset($catItemid[$cid])) {
+                    continue; // no menu → VM would 403 on SEF mismatch
+                }
+                $comUrls[] = 'index.php?option=com_virtuemart&view=category&virtuemart_category_id=' . $cid . '&Itemid=' . $catItemid[$cid];
             }
         } catch (RuntimeException $ex) {
             return array();
@@ -269,30 +306,17 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
             $db->setQuery($query);
             $products = $db->loadObjectList();
             foreach($products as $product){
-                if(empty($product->virtuemart_category_id)){
-                    $product->virtuemart_category_id = 0;
+                $cid = (int) $product->virtuemart_category_id;
+                $pid = (int) $product->virtuemart_product_id;
+                if (!$cid || !isset($catItemid[$cid])) {
+                    continue; // no usable Itemid → skip to avoid 403
                 }
-                $comUrls[] = 'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $product->virtuemart_product_id.'&virtuemart_category_id='.$product->virtuemart_category_id;
+                $comUrls[] = 'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $pid . '&virtuemart_category_id=' . $cid . '&Itemid=' . $catItemid[$cid];
             }
         } catch (RuntimeException $ex) {
             return array();
         }
 
-        $query = $db->createQuery()
-                ->select($db->quoteName('virtuemart_product_id'))
-                ->from('#__virtuemart_products');
-        try {
-            $db->setQuery($query);
-            $products = $db->loadObjectList();
-            foreach($products as $product){
-                if(empty($product->virtuemart_category_id)){
-                    $product->virtuemart_category_id = 0;
-                }
-                $comUrls[] = 'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $product->virtuemart_product_id.'&virtuemart_category_id=0';
-            }
-        } catch (RuntimeException $ex) {
-            return array();
-        }
         return $comUrls;
     }
     

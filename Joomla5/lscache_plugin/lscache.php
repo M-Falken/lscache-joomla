@@ -404,7 +404,8 @@ class plgSystemLSCache extends CMSPlugin {
                 $crawlList = [];
                 foreach ($rawList as $path) {
                     try {
-                        $routed = Route::link('site', $path);
+                        // xhtml=false → pas d'encodage des & en &amp; (crucial pour curl)
+                        $routed = Route::link('site', $path, false);
                         if (strpos($routed, '/component') === 0) {
                             $routed = '/' . $path;
                         }

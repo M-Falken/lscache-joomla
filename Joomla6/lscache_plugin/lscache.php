@@ -311,7 +311,10 @@ class plgSystemLSCache extends CMSPlugin {
                     $module->content = '<esi:include src="index.php?option=com_lscache&moduleid=' . $module->id . '&device=' . $device . $language . $this->getModuleAttribs($attribs) . '" cache-control="public,no-vary" cache-tag="' . $tag . '" />';
                 } else if ($module->lscache_type == -1) {
                     $tag = 'public:' . $tag . ',' . $tag;
-                    $module->content = '<esi:include src="index.php?option=com_lscache&moduleid=' . $module->id . '&device=' . $device . $language  . Factory::getLanguage()->getTag() . $this->getModuleAttribs($attribs) . '" cache-control="private,no-vary" cache-tag="' . $tag . '" />';
+                    // Note: $language already contains "&language=<tag>" when vary_language is on (see above).
+                    // Do NOT append Factory::getLanguage()->getTag() again or the URL becomes "language=fr-FRfr-FR",
+                    // which makes setDefault() in onAfterDispatch fail and breaks language fallback in the sub-render.
+                    $module->content = '<esi:include src="index.php?option=com_lscache&moduleid=' . $module->id . '&device=' . $device . $language . $this->getModuleAttribs($attribs) . '" cache-control="private,no-vary" cache-tag="' . $tag . '" />';
                 } else if ($module->lscache_type == 0) {
                     $module->content = '<esi:include src="' . 'index.php?option=com_lscache&moduleid=' . $module->id . '&device=' . $device . $language . $this->getModuleAttribs($attribs) . '" cache-control="no-cache"/>';
                 }
@@ -1550,7 +1553,11 @@ class plgSystemLSCache extends CMSPlugin {
 
         $lang = Factory::getLanguage();
         $language = $app->input->get('language');
-        if ($language && ($language!=$lang->getTag())) {
+        // Validate the language tag before using it. Defensive guard against
+        // historical malformed values (e.g. "fr-FRfr-FR" produced by an upstream
+        // bug in the ESI URL builder) that would silently break the language
+        // fallback by setting an invalid default.
+        if ($language && preg_match('/^[a-z]{2,3}-[A-Z]{2}$/', $language) && ($language != $lang->getTag())) {
             $lang->setDefault( $language );
             $lang->load();
         }

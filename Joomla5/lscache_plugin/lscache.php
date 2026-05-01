@@ -252,11 +252,21 @@ class plgSystemLSCache extends CMSPlugin {
     }
     
     public function onAfterRenderModule($module, $attribs="") {
-        
+
         if(isset($module->esiRending) && $module->esiRending){
             return;
         }
-        
+
+        // Skip ESI substitution on com_ajax module renders. A module with its
+        // own AJAX self-refresh (e.g. mod_vme_wishlist, mod_vme_compare) calls
+        // JModuleHelper::renderModule() inside its getAjax() helper to return
+        // {html: <fragment>}. Without this guard, $module->content would be
+        // replaced by an <esi:include> tag and the JSON-consumer JS would coerce
+        // the parsed Document to "[object HTMLDocument]" when injecting it.
+        if ($this->app->input->get('option') === 'com_ajax') {
+            return;
+        }
+
         if(isset($module->output)){
             $module->content = $module->output;
             return;

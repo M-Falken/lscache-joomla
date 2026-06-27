@@ -18,9 +18,11 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
         $this->dispatcher->addListener("plgVmOnAddToCart", [$this,'plgVmOnAddToCart']);
         $this->dispatcher->addListener("plgVmOnRemoveFromCart", [$this,'plgVmOnRemoveFromCart']);
         $this->dispatcher->addListener("plgVmOnUpdateCart", [$this,'plgVmOnUpdateCart']);
-        $this->dispatcher->addListener("plgVmAfterStoreProduct", [$this,'plgVmAfterStoreProduct']);
-        $this->dispatcher->addListener("plgVmOnDeleteProduct", [$this,'plgVmOnDeleteProduct']);
-        $this->dispatcher->addListener("plgVmAfterVendorStore", [$this,'plgVmAfterVendorStore']);
+        $this->dispatcher->addListener("plgVmAfterStoreProduct",   [$this,'plgVmAfterStoreProduct']);
+        $this->dispatcher->addListener("plgVmOnDeleteProduct",     [$this,'plgVmOnDeleteProduct']);
+        $this->dispatcher->addListener("plgVmAfterStoreCategory",  [$this,'plgVmAfterStoreCategory']);
+        $this->dispatcher->addListener("plgVmOnDeleteCategory",    [$this,'plgVmOnDeleteCategory']);
+        $this->dispatcher->addListener("plgVmAfterVendorStore",    [$this,'plgVmAfterVendorStore']);
         $this->dispatcher->addListener("plgVmConfirmedOrder", [$this,'plgVmConfirmedOrder']);
         $this->dispatcher->addListener("onContentPrepare", [$this,'onContentPrepare']);
 
@@ -132,6 +134,58 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
         }
         $this->plugin->purgeObject->urls = $this->getProductCategoryUrls($id);
         $this->plugin->purgeObject->urls[] = 'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $id.'&virtuemart_category_id=0';
+        $this->plugin->purgeAction();
+    }
+
+    public function plgVmAfterStoreCategory($data, $table=null)
+    {
+        if ($data instanceof Event) {
+            $table = $data->getArgument('1');
+            $data  = $data->getArgument('0');
+        }
+
+        $cid      = is_array($data) ? (int)($data['virtuemart_category_id'] ?? 0) : 0;
+        $parentId = is_array($data) ? (int)($data['category_parent_id']    ?? 0) : 0;
+
+        if (!$cid && is_object($table)) {
+            $cid      = (int)($table->virtuemart_category_id ?? 0);
+            $parentId = isset($table->category_parent_id) ? (int)$table->category_parent_id : 0;
+        }
+
+        if (!$cid) {
+            return;
+        }
+
+        $tag = "com_virtuemart, com_virtuemart.category:" . $cid;
+        if ($parentId > 0) {
+            $tag .= ", com_virtuemart.category:" . $parentId;
+        }
+        $this->plugin->purgeObject->tags[] = $tag;
+
+        if ($this->plugin->purgeObject->autoRecache == 0) {
+            $this->plugin->purgeAction();
+            return;
+        }
+
+        $this->plugin->purgeObject->urls[] = 'index.php?option=com_virtuemart&view=category&virtuemart_category_id=' . $cid;
+        if ($parentId > 0) {
+            $this->plugin->purgeObject->urls[] = 'index.php?option=com_virtuemart&view=category&virtuemart_category_id=' . $parentId;
+        }
+        $this->plugin->purgeAction();
+    }
+
+    public function plgVmOnDeleteCategory($data)
+    {
+        if ($data instanceof Event) {
+            $data = $data->getArgument('0');
+        }
+
+        $cid = is_array($data) ? (int)($data[0] ?? 0) : (int)$data;
+        if (!$cid) {
+            return;
+        }
+
+        $this->plugin->purgeObject->tags[] = "com_virtuemart, com_virtuemart.category:" . $cid;
         $this->plugin->purgeAction();
     }
 

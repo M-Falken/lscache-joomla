@@ -423,7 +423,11 @@ class plgSystemLSCache extends CMSPlugin {
                             $routed = '/' . $path;
                         }
                         if ((strpos($routed, '[') !== false) && (strpos($routed, ']') !== false)) {
-                            $routed = substr($routed, 0, strpos($routed, '?'));
+                            $pos = strpos($routed, '?');
+                            if ($pos === false) {
+                                continue;
+                            }
+                            $routed = substr($routed, 0, $pos);
                         }
                         $crawlList[] = $routed;
                     } catch (\Throwable $e) {
@@ -448,6 +452,8 @@ class plgSystemLSCache extends CMSPlugin {
                 register_shutdown_function(\Closure::bind(function () use ($pfClosure, $crawlList) {
                     if (function_exists('fastcgi_finish_request')) {
                         fastcgi_finish_request();
+                    } elseif (function_exists('litespeed_finish_request')) {
+                        litespeed_finish_request();
                     }
                     try {
                         $this->crawlUrls($crawlList, false, true);
@@ -1703,6 +1709,9 @@ class plgSystemLSCache extends CMSPlugin {
     }
 
     public function onAjaxLscache() {
+        if (!$this->isAdmin()) {
+            return ['status' => 'idle'];
+        }
         $progressFile = JPATH_ROOT . '/cache/lscache_rebuild_progress.json';
         if (!file_exists($progressFile)) {
             return ['status' => 'idle'];
@@ -1782,6 +1791,7 @@ class plgSystemLSCache extends CMSPlugin {
         $root = Uri::getInstance()->toString(array('scheme', 'host', 'port'));
         $recacheDuration = $this->settings->get('recacheDuration', 30) * 1000000;
         $break = false;
+        $breakReason     = null;
         $progressFile    = JPATH_ROOT . '/cache/lscache_rebuild_progress.json';
         $progressStarted = time();
         file_put_contents($progressFile, json_encode([
@@ -1840,7 +1850,7 @@ class plgSystemLSCache extends CMSPlugin {
             curl_setopt($ch, CURLOPT_REFERER, $root.'/');
             curl_setopt($ch, CURLOPT_HTTPHEADER, array(
                 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language: fr-FR,fr;q=0.9,en;q=0.8',
+                'Accept-Language: ' . $this->app->getLanguage()->getTag(),
                 'X-LSCACHE: 1',
             ));
             $start = microtime();
@@ -1852,9 +1862,8 @@ class plgSystemLSCache extends CMSPlugin {
             if (in_array($httpcode, $acceptCode)) {
                 $success++;
             } else if($httpcode==428){
-                echo 'Web Server crawler feature not enabled, please check <a href="https://www.litespeedtech.com/support/wiki/doku.php/litespeed_wiki:cache:lscwp:configuration:enabling_the_crawler" target="_blank">web server settings</a>';
                 $this->log('httpcode:'.$httpcode);
-                sleep(5);
+                $breakReason = 'LiteSpeed crawler feature not enabled — check web server settings (HTTP 428).';
                 $break = true;
                 break;
             } else {
@@ -1887,6 +1896,7 @@ class plgSystemLSCache extends CMSPlugin {
                 }
                 flush();
             } else if (($current % 10 == 0) && ($this->microtimeMinus($begin, microtime()) > $recacheDuration)) {
+                $breakReason = 'Recache duration limit reached — ' . $current . '/' . $count . ' pages processed.';
                 $break = true;
                 break;
             }
@@ -1905,12 +1915,13 @@ class plgSystemLSCache extends CMSPlugin {
         }
             
         file_put_contents($progressFile, json_encode([
-            'status'   => 'completed',
+            'status'   => $break ? 'error' : 'completed',
             'total'    => $count,
             'current'  => $current,
             'success'  => $success,
             'started'  => $progressStarted,
             'finished' => time(),
+            'error'    => $breakReason,
         ]));
         $totalTime = round($this->microtimeMinus($begin, microtime()) / 1000000);
         if ($count == $current) {

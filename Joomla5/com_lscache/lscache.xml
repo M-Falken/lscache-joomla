@@ -63,6 +63,10 @@
             <language tag="en-GB">en-GB/en-GB.plg_system_lscache.sys.ini</language>
             <language tag="en-GB">en-GB/en-GB.mod_lscache.ini</language>
             <language tag="en-GB">en-GB/en-GB.mod_lscache.sys.ini</language>
+            <language tag="fr-FR">fr-FR/fr-FR.com_lscache.ini</language>
+            <language tag="fr-FR">fr-FR/fr-FR.com_lscache.sys.ini</language>
+            <language tag="fr-FR">fr-FR/fr-FR.plg_system_lscache.ini</language>
+            <language tag="fr-FR">fr-FR/fr-FR.plg_system_lscache.sys.ini</language>
         </languages>
     </administration>
 

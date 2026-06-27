@@ -438,7 +438,7 @@ class plgSystemLSCache extends CMSPlugin {
                 $crawlList = [];
                 file_put_contents($progressFile, json_encode([
                     'status'  => 'error',
-                    'error'   => 'URL collection failed: ' . $e->getMessage(),
+                    'error'   => Text::sprintf('COM_LSCACHE_ERR_URL_COLLECTION', $e->getMessage()),
                     'total'   => 0,
                     'current' => 0,
                     'success' => 0,
@@ -452,7 +452,7 @@ class plgSystemLSCache extends CMSPlugin {
                 'current' => 0,
                 'success' => 0,
                 'started' => time(),
-                'error'   => empty($crawlList) ? 'No URLs found. Enable "Recache" in LSCache settings.' : null,
+                'error'   => empty($crawlList) ? Text::_('COM_LSCACHE_ERR_NO_URLS') : null,
             ]));
 
             if (!empty($crawlList)) {
@@ -1871,7 +1871,7 @@ class plgSystemLSCache extends CMSPlugin {
                 $success++;
             } else if($httpcode==428){
                 $this->log('httpcode:'.$httpcode);
-                $breakReason = 'LiteSpeed crawler feature not enabled — check web server settings (HTTP 428).';
+                $breakReason = Text::_('COM_LSCACHE_ERR_CRAWLER_DISABLED');
                 $break = true;
                 break;
             } else {
@@ -1904,7 +1904,7 @@ class plgSystemLSCache extends CMSPlugin {
                 }
                 flush();
             } else if (($current % 10 == 0) && ($this->microtimeMinus($begin, microtime()) > $recacheDuration)) {
-                $breakReason = 'Recache duration limit reached — ' . $current . '/' . $count . ' pages processed.';
+                $breakReason = Text::sprintf('COM_LSCACHE_ERR_DURATION_LIMIT', $current, $count);
                 $break = true;
                 break;
             }

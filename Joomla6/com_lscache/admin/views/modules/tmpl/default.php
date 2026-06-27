@@ -47,7 +47,7 @@ $colSpan = $clientId === 1 ? 8 : 10;
 
 <div id="lscache-rebuild-progress" style="display:none;margin:10px 0;">
     <div class="alert alert-info" style="margin-bottom:0;">
-        <strong id="lscache-rebuild-title">Cache Rebuild In Progress</strong>
+        <strong id="lscache-rebuild-title"><?php echo Text::_('COM_LSCACHE_REBUILD_IN_PROGRESS'); ?></strong>
         <div class="progress" style="margin:6px 0 2px;height:20px;">
             <div id="lscache-rebuild-bar"
                  class="progress-bar progress-bar-striped active"
@@ -55,7 +55,7 @@ $colSpan = $clientId === 1 ? 8 : 10;
                  style="width:0%;min-width:2em;transition:width 0.4s ease;">
             </div>
         </div>
-        <small id="lscache-rebuild-text">Starting…</small>
+        <small id="lscache-rebuild-text"><?php echo Text::_('COM_LSCACHE_REBUILD_STARTING'); ?></small>
     </div>
 </div>
 
@@ -264,6 +264,16 @@ $colSpan = $clientId === 1 ? 8 : 10;
 	</div>
 </form>
 <script>
+var _lscRebuild = {
+    inProgress:    <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_IN_PROGRESS')); ?>,
+    starting:      <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_STARTING')); ?>,
+    titleComplete: <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_TITLE_COMPLETE')); ?>,
+    titleError:    <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_TITLE_ERROR')); ?>,
+    cached:        <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_CACHED')); ?>,
+    completeMsg:   <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_COMPLETE_MSG')); ?>,
+    pagesCached:   <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_PAGES_CACHED')); ?>,
+    remaining:     <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_REMAINING')); ?>
+};
 (function () {
     var progressUrl = 'index.php?option=com_ajax&plugin=lscache&group=system&format=json';
     var wrapper     = document.getElementById('lscache-rebuild-progress');
@@ -271,18 +281,33 @@ $colSpan = $clientId === 1 ? 8 : 10;
     var text        = document.getElementById('lscache-rebuild-text');
     var title       = document.getElementById('lscache-rebuild-title');
     var timer       = null;
+    var errorCount  = 0;
 
     function setProgress(pct, label) {
         bar.style.width = pct + '%';
         text.textContent = label;
     }
 
+    function formatEta(seconds) {
+        if (seconds >= 3600) {
+            return '~' + Math.floor(seconds / 3600) + 'h' + Math.floor((seconds % 3600) / 60) + 'm ' + _lscRebuild.remaining;
+        } else if (seconds >= 60) {
+            return '~' + Math.floor(seconds / 60) + 'm' + Math.floor(seconds % 60) + 's ' + _lscRebuild.remaining;
+        }
+        return '~' + seconds + 's ' + _lscRebuild.remaining;
+    }
+
     function poll() {
         fetch(progressUrl, {cache: 'no-store'})
             .then(function (r) { return r.json(); })
             .then(function (resp) {
-                if (!resp || resp.success === false) { clearInterval(timer); return; }
-                var data = (resp && resp.data) ? resp.data : resp;
+                if (!resp || resp.success === false) {
+                    if (++errorCount >= 3) { clearInterval(timer); }
+                    return;
+                }
+                errorCount = 0;
+                var raw  = (resp && resp.data) ? resp.data : resp;
+                var data = Array.isArray(raw) ? raw[0] : raw;
                 if (!data || !data.status || data.status === 'idle') {
                     wrapper.style.display = 'none';
                     clearInterval(timer);
@@ -290,33 +315,41 @@ $colSpan = $clientId === 1 ? 8 : 10;
                 }
                 wrapper.style.display = 'block';
                 if (data.status === 'starting') {
-                    setProgress(0, 'Starting rebuild…');
+                    setProgress(0, _lscRebuild.starting);
                 } else if (data.status === 'running') {
                     var total   = data.total   || 1;
                     var current = data.current || 0;
                     var success = data.success || 0;
                     var pct     = Math.round(current / total * 100);
-                    setProgress(pct, current + ' / ' + total + ' pages  (' + pct + '%)  —  ' + success + ' cached');
+                    var eta     = '';
+                    if (current > 0 && data.started) {
+                        var elapsed   = Math.floor(Date.now() / 1000) - data.started;
+                        var remaining = Math.round((elapsed / current) * (total - current));
+                        if (remaining > 0) { eta = '  —  ' + formatEta(remaining); }
+                    }
+                    setProgress(pct, current + ' / ' + total + ' pages (' + pct + '%) — ' + success + ' ' + _lscRebuild.cached + eta);
                 } else if (data.status === 'completed') {
                     bar.classList.remove('active');
                     bar.style.background = '#5cb85c';
-                    setProgress(100, 'Rebuild complete: ' + (data.success || 0) + ' / ' + (data.total || 0) + ' pages cached');
-                    title.textContent = 'Cache Rebuild Complete';
+                    setProgress(100, _lscRebuild.completeMsg + ' ' + (data.success || 0) + ' / ' + (data.total || 0) + ' ' + _lscRebuild.pagesCached);
+                    title.textContent = _lscRebuild.titleComplete;
                     clearInterval(timer);
                     setTimeout(function () { wrapper.style.display = 'none'; }, 8000);
                 } else if (data.status === 'error') {
                     bar.classList.remove('active');
                     bar.style.background = '#d9534f';
-                    wrapper.querySelector('.alert').classList.replace('alert-info', 'alert-danger');
-                    title.textContent = 'Rebuild Error';
+                    var alertEl = wrapper.querySelector('.alert');
+                    alertEl.className = alertEl.className.replace('alert-info', 'alert-danger');
+                    title.textContent = _lscRebuild.titleError;
                     text.textContent = data.error || 'Unknown error';
                     clearInterval(timer);
                 }
             })
-            .catch(function () { clearInterval(timer); });
+            .catch(function () {
+                if (++errorCount >= 3) { clearInterval(timer); }
+            });
     }
 
-    // Start polling immediately on page load
     poll();
     timer = setInterval(poll, 2000);
 })();

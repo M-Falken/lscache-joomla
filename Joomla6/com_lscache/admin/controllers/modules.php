@@ -121,6 +121,11 @@ class LSCacheControllerModules extends AdminController {
         $app = Factory::getApplication();
         if (file_exists($progressFile)) {
             $data = file_get_contents($progressFile);
+            if ($data === false) {
+                echo json_encode(['status' => 'idle']);
+                $app->close();
+                return;
+            }
             $json = json_decode($data, true);
             if (is_array($json) && isset($json['started']) && (time() - $json['started']) > 3600) {
                 @unlink($progressFile);

@@ -278,7 +278,7 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
                     }
                 }
             }
-        } catch (RuntimeException $ex) {
+        } catch (\Throwable) {
             // continue with empty map — categories without menu will be skipped
         }
 
@@ -295,7 +295,7 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
                 }
                 $comUrls[] = 'index.php?option=com_virtuemart&view=category&virtuemart_category_id=' . $cid . '&Itemid=' . $catItemid[$cid];
             }
-        } catch (RuntimeException $ex) {
+        } catch (\Throwable) {
             return array();
         }
 
@@ -313,7 +313,7 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
                 }
                 $comUrls[] = 'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $pid . '&virtuemart_category_id=' . $cid . '&Itemid=' . $catItemid[$cid];
             }
-        } catch (RuntimeException $ex) {
+        } catch (\Throwable) {
             return array();
         }
 

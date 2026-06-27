@@ -251,7 +251,7 @@ class plgSystemLSCache extends CMSPlugin {
         }
     }
     
-    public function onAfterRenderModule($module, $attribs="") {
+    public function onAfterRenderModule($module, $attribs=[]) {
 
         if(isset($module->esiRending) && $module->esiRending){
             return;
@@ -399,7 +399,7 @@ class plgSystemLSCache extends CMSPlugin {
         if ($this->purgeObject->recacheAll) {
             $this->purgeObject->recacheAll = false;
             ignore_user_abort(true);
-            set_time_limit(0);
+            set_time_limit(0); // unlimited: URL pre-collection may take time on large sites
             $progressFile = JPATH_ROOT . '/cache/lscache_rebuild_progress.json';
 
             // Collect URLs NOW while Joomla is fully initialised (getSiteMap + Route::link need
@@ -407,7 +407,7 @@ class plgSystemLSCache extends CMSPlugin {
             // never has to touch session/router (headers already sent = session_start() fails).
             try {
                 $menus   = $this->getSiteMap();
-                $rawList = array_map(function ($m) { return $m->path; }, $menus);
+                $rawList = array_column($menus, 'path');
                 $recacheComponent = $this->settings->get('recacheComponent', false);
                 if ($recacheComponent) {
                     $compUrls = $this->componentHelper->getComMap($recacheComponent);
@@ -436,6 +436,14 @@ class plgSystemLSCache extends CMSPlugin {
                 }
             } catch (\Throwable $e) {
                 $crawlList = [];
+                file_put_contents($progressFile, json_encode([
+                    'status'  => 'error',
+                    'error'   => 'URL collection failed: ' . $e->getMessage(),
+                    'total'   => 0,
+                    'current' => 0,
+                    'success' => 0,
+                    'started' => time(),
+                ]));
             }
 
             file_put_contents($progressFile, json_encode([

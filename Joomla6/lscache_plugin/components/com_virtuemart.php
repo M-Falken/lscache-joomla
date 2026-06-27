@@ -22,8 +22,9 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
         $this->dispatcher->addListener("plgVmOnDeleteProduct",     [$this,'plgVmOnDeleteProduct']);
         $this->dispatcher->addListener("plgVmAfterStoreCategory",  [$this,'plgVmAfterStoreCategory']);
         $this->dispatcher->addListener("plgVmOnDeleteCategory",    [$this,'plgVmOnDeleteCategory']);
-        $this->dispatcher->addListener("plgVmAfterVendorStore",    [$this,'plgVmAfterVendorStore']);
-        $this->dispatcher->addListener("plgVmConfirmedOrder", [$this,'plgVmConfirmedOrder']);
+        $this->dispatcher->addListener("plgVmAfterVendorStore",       [$this,'plgVmAfterVendorStore']);
+        $this->dispatcher->addListener("plgVmConfirmedOrder",         [$this,'plgVmConfirmedOrder']);
+        $this->dispatcher->addListener("plgVmOnUpdateOrderShipment",  [$this,'plgVmOnUpdateOrderShipment']);
         $this->dispatcher->addListener("onContentPrepare", [$this,'onContentPrepare']);
 
         $db = Factory::getDbo();
@@ -212,6 +213,82 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
         }
         $urls = $this->getProductCategoryUrls($productids);
         $this->plugin->purgeObject->urls = array_merge($urls, $productUrls);
+        $this->plugin->purgeAction();
+    }
+
+    public function plgVmOnUpdateOrderShipment($order, $old_order_status=null, $inputOrder=null)
+    {
+        if ($order instanceof Event) {
+            $old_order_status = $order->getArgument('1');
+            $order            = $order->getArgument('0');
+        }
+
+        if (!is_object($order) || empty($order->virtuemart_order_id)) {
+            return;
+        }
+
+        $new_status = $order->order_status ?? null;
+        if (!$new_status || $new_status === $old_order_status) {
+            return;
+        }
+
+        if (!$this->orderStatusAffectsStock($new_status, $old_order_status)) {
+            return;
+        }
+
+        $this->purgeOrderProductCache((int)$order->virtuemart_order_id);
+    }
+
+    private function orderStatusAffectsStock($newStatus, $oldStatus)
+    {
+        $db = Factory::getDbo();
+        $query = $db->createQuery()
+            ->select($db->quoteName(['order_status_code', 'order_stock_handle']))
+            ->from($db->quoteName('#__virtuemart_order_statuses'))
+            ->where($db->quoteName('order_status_code') . ' IN ('
+                . $db->quote($newStatus) . ',' . $db->quote($oldStatus) . ')');
+        $db->setQuery($query);
+        $rows = $db->loadObjectList('order_status_code');
+
+        $newHandle = isset($rows[$newStatus]) ? $rows[$newStatus]->order_stock_handle : 'A';
+        $oldHandle = isset($rows[$oldStatus]) ? $rows[$oldStatus]->order_stock_handle : 'A';
+
+        return $newHandle !== $oldHandle;
+    }
+
+    private function purgeOrderProductCache($orderId)
+    {
+        $db = Factory::getDbo();
+        $query = $db->createQuery()
+            ->select($db->quoteName('virtuemart_product_id'))
+            ->from($db->quoteName('#__virtuemart_order_items'))
+            ->where($db->quoteName('virtuemart_order_id') . ' = ' . $orderId);
+        $db->setQuery($query);
+        $productIds = $db->loadColumn();
+
+        if (empty($productIds)) {
+            return;
+        }
+
+        $productIds = array_map('intval', array_unique($productIds));
+
+        $tag = "com_virtuemart";
+        $productUrls = [];
+        foreach ($productIds as $pid) {
+            $tag .= ", com_virtuemart.product:" . $pid;
+            $productUrls[] = 'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $pid . '&virtuemart_category_id=0';
+        }
+        $tag .= $this->getProductCategoryTags($productIds);
+
+        $this->plugin->purgeObject->tags[] = $tag;
+
+        if ($this->plugin->purgeObject->autoRecache == 0) {
+            $this->plugin->purgeAction();
+            return;
+        }
+
+        $categoryUrls = $this->getProductCategoryUrls($productIds);
+        $this->plugin->purgeObject->urls = array_merge($categoryUrls, $productUrls);
         $this->plugin->purgeAction();
     }
 

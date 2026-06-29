@@ -256,7 +256,7 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
         $db = Factory::getDbo();
         $query = $db->createQuery()
             ->select($db->quoteName(['order_status_code', 'order_stock_handle']))
-            ->from($db->quoteName('#__virtuemart_order_statuses'))
+            ->from($db->quoteName('#__virtuemart_orderstates'))
             ->where($db->quoteName('order_status_code') . ' IN ('
                 . $db->quote($newStatus) . ',' . $db->quote($oldStatus) . ')');
         $db->setQuery($query);

@@ -292,6 +292,88 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
         $this->plugin->purgeAction();
     }
 
+    /**
+     * VirtueMart never fires a plugin event when a calculation rule (discount/tax,
+     * #__virtuemart_calcs) is saved or deleted from the admin "Calculation Rules" view —
+     * only a vmcalculation-scoped event unrelated to caching. Called from
+     * LiteSpeedCacheCore::purgeAdmin() for option=com_virtuemart&view=calc.
+     */
+    public function purgeCalcRule()
+    {
+        $app = Factory::getApplication();
+
+        $calcIds = array();
+        $singleId = (int) $app->input->get('virtuemart_calc_id', 0, 'int');
+        if ($singleId > 0) {
+            $calcIds[] = $singleId;
+        }
+        foreach ($app->input->get('cid', array(), 'array') as $cid) {
+            $cid = (int) $cid;
+            if ($cid > 0) {
+                $calcIds[] = $cid;
+            }
+        }
+        $calcIds = array_unique($calcIds);
+        if (empty($calcIds)) {
+            return;
+        }
+
+        $db = Factory::getDbo();
+        $idsList = implode(',', $calcIds);
+
+        // Products directly assigned this rule (the "Prix final" discount selector on the product form)
+        $query = $db->createQuery()
+                ->select('DISTINCT ' . $db->quoteName('virtuemart_product_id'))
+                ->from($db->quoteName('#__virtuemart_product_prices'))
+                ->where($db->quoteName('product_discount_id') . ' IN (' . $idsList . ')');
+        $db->setQuery($query);
+        $productIds = $db->loadColumn();
+
+        // Categories the rule is scoped to — every product in these categories is affected too
+        $query = $db->createQuery()
+                ->select($db->quoteName('virtuemart_category_id'))
+                ->from($db->quoteName('#__virtuemart_calc_categories'))
+                ->where($db->quoteName('virtuemart_calc_id') . ' IN (' . $idsList . ')');
+        $db->setQuery($query);
+        $categoryIds = $db->loadColumn();
+
+        if (!empty($categoryIds)) {
+            $query = $db->createQuery()
+                    ->select('DISTINCT ' . $db->quoteName('virtuemart_product_id'))
+                    ->from($db->quoteName('#__virtuemart_product_categories'))
+                    ->where($db->quoteName('virtuemart_category_id') . ' IN (' . implode(',', array_map('intval', $categoryIds)) . ')');
+            $db->setQuery($query);
+            $productIds = array_merge($productIds, $db->loadColumn());
+        }
+        $productIds = array_unique(array_map('intval', $productIds));
+
+        if (empty($productIds)) {
+            // Scoped only by manufacturer/shopper group/country/state (not resolvable cheaply
+            // to specific product pages), or not linked to any product yet — purge broadly.
+            $this->plugin->purgeObject->tags[] = "com_virtuemart";
+            $this->plugin->purgeAction();
+            return;
+        }
+
+        $tag = "com_virtuemart" . $this->getProductCategoryTags($productIds);
+        foreach ($productIds as $pid) {
+            $tag .= ", com_virtuemart.product:" . $pid;
+        }
+        $this->plugin->purgeObject->tags[] = $tag;
+
+        if ($this->plugin->purgeObject->autoRecache == 0) {
+            $this->plugin->purgeAction();
+            return;
+        }
+
+        $urls = $this->getProductCategoryUrls($productIds);
+        foreach ($productIds as $pid) {
+            $urls[] = 'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $pid . '&virtuemart_category_id=0';
+        }
+        $this->plugin->purgeObject->urls = $urls;
+        $this->plugin->purgeAction();
+    }
+
     public function onPurgeContent($context, $row)
     {
         if ($context == "com_virtuemart.product") {

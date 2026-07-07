@@ -975,6 +975,17 @@ class plgSystemLSCache extends CMSPlugin {
                 $this->purgeObject->ids[] = "featured";
                 $this->purgeAction();
             }
+        }   else if(($option == "com_virtuemart") && ($app->input->get('view') == "calc")){
+            // VirtueMart calc rules (discounts/tax) never fire a plugin event on save/delete,
+            // unlike products/categories — the form posts to plain index.php so the view/task
+            // must be read from input directly, pageElements won't have them (no query string).
+            $task = $app->input->get('task', '', 'cmd');
+            if (in_array($task, array("save", "apply", "remove", "publish", "unpublish"), true) || str_starts_with($task, 'toggle.published')) {
+                $instance = $this->componentHelper->getInstance('com_virtuemart');
+                if ($instance instanceof LSCacheComponentVirtueMart) {
+                    $instance->purgeCalcRule();
+                }
+            }
         }
 
     }

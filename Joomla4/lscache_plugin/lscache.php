@@ -166,7 +166,7 @@ class plgSystemLSCache extends CMSPlugin {
             $this->pageCachable = false;
             return;
         }
-        
+
         if ($this->isAdmin()) {
             $this->pageCachable = false;
             $this->purgeAdmin($option);
@@ -175,25 +175,37 @@ class plgSystemLSCache extends CMSPlugin {
             if($app->input->get("lscache_formtoken")=="1"){
                 $token = JSession::getFormToken();
                 $app->input->post->set($token,'1');
+                // Also cover consumers validating via Session::checkToken('get'|'request')
+                $app->input->get->set($token,'1');
+                $app->input->request->set($token,'1');
+            }
+            // Joomla.request() (core.js) reads csrf.token from the script-options
+            // block and sends it as the X-CSRF-Token header; on a cached page that
+            // value is the neutralized marker. Substitute the current session token
+            // so Session::checkToken()'s header path succeeds.
+            if($app->input->server->get('HTTP_X_CSRF_TOKEN', '', 'raw') === 'lscache_formtoken'){
+                $token = JSession::getFormToken();
+                $app->input->server->set('HTTP_X_CSRF_TOKEN', $token);
+                $_SERVER['HTTP_X_CSRF_TOKEN'] = $token;
             }
         }
 
-        
-        //avoid some application have expired login session serve 
+
+        //avoid some application have expired login session serve
         $session = JFactory::getSession();
         $user = JFactory::getUser();
         if(($session->get('lscacheLogin')!='1') && !$user->get('guest')){
             $this->pageCachable = false;
         }
-        
+
         //login esi override and esi always on implement
         if($this->settings->get('loginOverrideESI', 0)  && !$user->get('guest')){
             $this->esiEnabled = $this->settings->get('loginOverrideESI');
-        }        
+        }
         if($this->esiEnabled==2){
             $this->esion=true;
         }
-        
+
         //avoid article edit form been cached
         if (($option=='com_content') && ($app->input->get('view')=='form' )){
             $this->pageCachable = false;
@@ -202,7 +214,7 @@ class plgSystemLSCache extends CMSPlugin {
         if ( isset($this->pageElements["view"]) && ($this->pageElements["view"]=='featured')){
             $this->cacheTags[] = $option . ":featured";
         }
-                
+
      //if post back, purge current page, disabled in case purge search post back
         if ($this->pageCachable && ($app->input->getMethod() != 'GET')) {
             $this->pageCachable = false;
@@ -220,7 +232,7 @@ class plgSystemLSCache extends CMSPlugin {
         }
 
         if (!$this->pageCachable) {
-            
+
         } else if (JDEBUG) {
             $this->pageCachable = false;
         } else if (count($app->getMessageQueue())) {
@@ -245,25 +257,25 @@ class plgSystemLSCache extends CMSPlugin {
             $this->pageCachable = false;
         }
     }
-    
+
     public function onAfterRenderModule($module, $attribs="") {
-        
+
         if(isset($module->esiRending) && $module->esiRending){
             return;
         }
-        
+
         if(isset($module->output)){
             $module->content = $module->output;
             return;
         }
-        
+
         if (!$this->pageCachable) {
             return;
         }
 
         $tag = $this->moduleHelper->getModuleTags($module);
         $cacheType = $this->getModuleCacheType($module);
-        
+
         $etag = 'com_modules:' . $module->id;
         if (!empty($module->lscache_tag)) {
             $etag .= ',' . $module->lscache_tag;
@@ -291,7 +303,7 @@ class plgSystemLSCache extends CMSPlugin {
                 if ($module->vary_language) {
                     $language = '&language=' . JFactory::getLanguage()->getTag();
                 }
-                
+
                 if ($module->lscache_type == 1) {
                     $module->content = '<esi:include src="index.php?option=com_lscache&moduleid=' . $module->id . '&device=' . $device . $language . $this->getModuleAttribs($attribs) . '" cache-control="public,no-vary" cache-tag="' . $tag . '" />';
                 } else if ($module->lscache_type == -1) {
@@ -308,7 +320,7 @@ class plgSystemLSCache extends CMSPlugin {
                 $js = '$.ajax({url: "' . $url .'", success: function(result){' . PHP_EOL ;
                 $js .= '    $("#lscache_mod' . $module->id . '").replaceWith(result);' . PHP_EOL ;
                 $js .= '}});' .PHP_EOL ;
-                
+
                 $this->esijs[] = $js;
                 $module->content = '<div id="lscache_mod' .  $module->id  . '"><div>';
                 $this->esion = true;
@@ -336,18 +348,18 @@ class plgSystemLSCache extends CMSPlugin {
         if (strpos($context, "text") === 0) {
             return;
         }
-        
+
         if($context == "com_content.featured"){
             return;
         }
 
-        
+
         // if already have context ignore category context
         if(in_array($context, self::CATEGORY_CONTEXTS) && isset($this->pageElements["context"]) && ($context!=$this->pageElements["context"])){
             return;
         }
-        
-        // if it has category context, override it with no-category context                
+
+        // if it has category context, override it with no-category context
         if(!in_array($context, self::CATEGORY_CONTEXTS) && isset($this->pageElements["context"]) &&  in_array($this->pageElements["context"], self::CATEGORY_CONTEXTS)){
             $this->pageElements["context"] = $context;
             return;
@@ -365,7 +377,7 @@ class plgSystemLSCache extends CMSPlugin {
             define('LSCACHE_RENDERED',true);
         }
     }
-    
+
     public function onAfterRender() {
         if (!$this->cacheEnabled) {
             if($this->esion){
@@ -373,7 +385,7 @@ class plgSystemLSCache extends CMSPlugin {
             }
             return;
         }
-        
+
         if(defined('LSCACHE_RENDERED')){
             return;
         }
@@ -397,7 +409,7 @@ class plgSystemLSCache extends CMSPlugin {
         if(isset($headers[0]) && isset($headers[0]['name']) && ($headers[0]['name']=='status') && (strpos($headers[0]['value'],'200')===FALSE) && (strpos($headers[0]['value'],'201')===FALSE)){
             return;
         }
-        
+
         if (isset($this->pageElements["context"])) {
             $context = $this->pageElements["context"];
             if ($context && in_array($context, self::CATEGORY_CONTEXTS)) {
@@ -409,7 +421,7 @@ class plgSystemLSCache extends CMSPlugin {
         if (isset($context)) {
             $option = $this->getOption($context);
         }
-        
+
         if (isset($this->pageElements["id"])) {
             $id = $this->pageElements["id"];
         }
@@ -424,7 +436,7 @@ class plgSystemLSCache extends CMSPlugin {
         if (!empty($option)){
             $this->cacheTags[] = 'cmp:' . $option;
         }
-        
+
         if (empty($option) && !empty($this->menuItem)) {
             if ($this->menuItem && !$this->menuItem->home) {
                 return;
@@ -461,16 +473,23 @@ class plgSystemLSCache extends CMSPlugin {
         $search = '#<input.*?name="'. $token . '".*?>#';
         $replace = '<input type="hidden" name="lscache_formtoken" value="1">';
         $data = preg_replace($search, $replace, $content, -1, $count);
+        // Also neutralize the session token wherever it appears as a quoted JSON/JS
+        // string, typically the "joomla-script-options" block (core csrf.token and
+        // tokens registered by extensions via addScriptOptions). The cached copy
+        // would otherwise serve the seeding session's token to every visitor,
+        // silently breaking AJAX calls that read it. The token is a session-specific
+        // 32-char hash, so this replacement cannot produce false positives.
+        $data = str_replace('"' . $token . '"', '"lscache_formtoken"', $data);
         $this->app->setBody($data);
-        
+
         if ($cacheTimeout == 0) {
             return;
         }
-        
+
         $this->lscInstance->config(array("public_cache_timeout" => $cacheTimeout, "private_cache_timeout" => $cacheTimeout));
         $this->lscInstance->cachePublic($cacheTags, $this->esion);
         $this->log();
-        
+
     }
 
     private function getOption($context) {
@@ -518,7 +537,7 @@ class plgSystemLSCache extends CMSPlugin {
         }
         $session = JFactory::getSession();
         $session->set('lscacheLogin', '1');
-        
+
         if (!$this->cacheEnabled) {
             return;
         }
@@ -579,13 +598,13 @@ class plgSystemLSCache extends CMSPlugin {
         if ($this->purgeObject->purgeAll) {
             return;
         }
-        
+
         if(is_array($row) && ($context != "com_users.user")){
             foreach ($row as $rowitem){
                 $this->purgeContent($context, $rowitem);
             }
         }
-                
+
         if(empty($row)){
             return;
         }
@@ -595,7 +614,7 @@ class plgSystemLSCache extends CMSPlugin {
         } else {
             if(empty($row->id)){ return; }
         }
-        
+
         $option = $this->getOption($context);
 
         $menu_contexts = array('com_menus.item', 'com_menus.menu');
@@ -722,11 +741,11 @@ class plgSystemLSCache extends CMSPlugin {
         if (!$this->cacheEnabled) {
             return;
         }
-        
+
         if(isset($row->element) && ($row->element=='com_lscache')){
             $newSetting = json_decode($row->params);
             if($this->settings->get('mobileCacheVary') != $newSetting->mobileCacheVary){
-                $this->app->enqueueMessage(JText::_('COM_LSCACHE_PLUGIN_CHECKHTACCESS'), "warning");            
+                $this->app->enqueueMessage(JText::_('COM_LSCACHE_PLUGIN_CHECKHTACCESS'), "warning");
             }
         }
 
@@ -870,7 +889,7 @@ class plgSystemLSCache extends CMSPlugin {
                     $this->purgeObject->tags[] = 'cmp:' . $cid;
                 }
                 $this->purgeAction();
-                $this->app->enqueueMessage(JText::_('COM_LSCACHE_PLUGIN_PURGEINFORMED'), "message");            
+                $this->app->enqueueMessage(JText::_('COM_LSCACHE_PLUGIN_PURGEINFORMED'), "message");
             }
         }   else if(($option == "com_content") && (!empty($task=$app->input->get('task')))){
             if(in_array($task, array("articles.featured", "articles.unfeatured")) ){
@@ -883,7 +902,7 @@ class plgSystemLSCache extends CMSPlugin {
         }
 
     }
-    
+
     public function getModuleMenuItems($moduleid) {
         $db = JFactory::getDbo();
         $query = $db->getQuery(true)
@@ -950,7 +969,7 @@ class plgSystemLSCache extends CMSPlugin {
         $this->purgeObject->purgeAll = true;
         $this->purgeAction();
     }
-    
+
     public function onExtensionAfterUninstall($eid) {
         if (!$this->cacheEnabled) {
             return;
@@ -1150,7 +1169,7 @@ class plgSystemLSCache extends CMSPlugin {
         $template = $db->loadObject();
         return $template;
     }
-    
+
     protected function getUserContactTag($uid){
         $db = JFactory::getDbo();
         $query = $db->getQuery(true)
@@ -1160,7 +1179,7 @@ class plgSystemLSCache extends CMSPlugin {
             ->where('c.user_id = ' . (int) $uid);
         $db->setQuery($query);
         $contact_ids = $db->loadColumn();
-        
+
         return implode(',' ,array_map(function($value) { return 'com_contact:' . $value ;}, $contact_ids ));
     }
 
@@ -1220,7 +1239,7 @@ class plgSystemLSCache extends CMSPlugin {
         if ($logLevelSetting < 0) {
             return;
         } else if(($logLevelSetting==JLog::DEBUG) && ($this->app->getUserState('lscacheOption',"")=="debug")){
-            
+
         } else if ($logLevel > $logLevelSetting) {
             return;
         }
@@ -1347,7 +1366,7 @@ class plgSystemLSCache extends CMSPlugin {
                 $ipPass = false;
             }
         }
-        
+
         $cleancache = $app->input->get('cleanCache');
         if($ipPass && (!empty($cleancache))) {
             $cleanWords = $this->settings->get('cleanCache', 'purgeAllCache');
@@ -1369,7 +1388,7 @@ class plgSystemLSCache extends CMSPlugin {
             $app->close();
             return;
         }
-        
+
         $recache = $app->input->get('recache');
         if ($ipPass && (!empty($recache))) {
             $cleanWords = $this->settings->get('cleanCache', 'purgeAllCache');
@@ -1382,7 +1401,7 @@ class plgSystemLSCache extends CMSPlugin {
             $app->close();
             return;
         }
-        
+
 
         if (!$this->esiEnabled) {
             http_response_code(403);
@@ -1402,7 +1421,7 @@ class plgSystemLSCache extends CMSPlugin {
             $app->close();
             return;
         }
-        
+
         $module = $this->getModule($moduleid);
         if (!$module) {
             http_response_code(403);
@@ -1430,7 +1449,7 @@ class plgSystemLSCache extends CMSPlugin {
             $uri = JURI::getinstance();
             $uri->setPath("");
             $uri->setQuery("");
-            $uri->setFragment(""); 
+            $uri->setFragment("");
             $uri->parse($_SERVER['HTTP_REFERER']);
 
             $appInstance = JApplication::getInstance('site');
@@ -1499,8 +1518,8 @@ class plgSystemLSCache extends CMSPlugin {
                 $this->lscInstance->cachePrivate($tag, $tag);
                 $this->log();
             }
-            
-            if ($module->module_type == 0) {                
+
+            if ($module->module_type == 0) {
                 echo $content;
                 $app->close();
             } else {
@@ -1648,7 +1667,7 @@ class plgSystemLSCache extends CMSPlugin {
                     $curlMenus[]=$menu;
                 }
             }
-        } 
+        }
         return $curlMenus;
     }
 
@@ -1659,7 +1678,7 @@ class plgSystemLSCache extends CMSPlugin {
         if (php_sapi_name() == 'cli') {
             $cli = true;
         }
-        
+
         $count = count($urls);
         if ($count < 1) {
             return "";
@@ -1682,7 +1701,7 @@ class plgSystemLSCache extends CMSPlugin {
             }
             flush();
         }
-        
+
         foreach ($urls as $url) {
             $ch = curl_init();
             if ($this->isAdmin()) {
@@ -1695,15 +1714,15 @@ class plgSystemLSCache extends CMSPlugin {
             } else {
                 $curlurl = JRoute::link("site",$url);
             }
-            
+
             if(strpos($curlurl, '/component')===0){
                 $curlurl ='/'.$url;
             }
-            
+
             if((strpos($curlurl,'[')!==false) && (strpos($curlurl,']')!==false)){
                 $curlurl = substr($curlurl, 0, strpos($curlurl,'?'));
             }
-            
+
             curl_setopt($ch, CURLOPT_URL, $root.$curlurl);
             curl_setopt($ch, CURLOPT_HEADER, false);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -1715,7 +1734,7 @@ class plgSystemLSCache extends CMSPlugin {
             curl_setopt($ch, CURLOPT_ENCODING, "gzip");
             curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
             $start = microtime();
-            
+
             $buffer = curl_exec($ch);
             $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
@@ -1735,15 +1754,15 @@ class plgSystemLSCache extends CMSPlugin {
             $current++;
 
             if ($output) {
-            
+
                 echo 'curl url: ' . $root . '/' . $url . '<br/>' .  PHP_EOL;
-                
+
                 if ($cli) {
                     echo $current . '/' . $count . ' ' . $root.$curlurl . ' : ' . $httpcode . PHP_EOL;
                 } else {
                     echo $current . '/' . $count . ' ' . $root.$curlurl . ' : ' . $httpcode . '<br/>' . PHP_EOL;
                 }
-                
+
                 if (ob_get_contents()){
                     ob_flush();
                 }
@@ -1752,7 +1771,7 @@ class plgSystemLSCache extends CMSPlugin {
                 $break = true;
                 break;
             }
-            
+
             $end = microtime();
             $diff = $this->microtimeMinus($start, $end);
             usleep(round($diff));
@@ -1765,7 +1784,7 @@ class plgSystemLSCache extends CMSPlugin {
             }
             flush();
         }
-            
+
         $totalTime = round($this->microtimeMinus($begin, microtime()) / 1000000);
         if ($count == $current) {
             $msg = str_replace('%d', $totalTime, JText::_('COM_LSCACHE_PLUGIN_PAGERECACHED'));
@@ -1821,7 +1840,7 @@ class plgSystemLSCache extends CMSPlugin {
             if ($this->isAdmin()) {
                 $this->app->enqueueMessage(JText::_('COM_LSCACHE_PLUGIN_NEEDMANUALRECACHE'), "message");
             }
-            
+
         } else if (count($this->purgeObject->tags) > 0) {
             $serveStale = $this->settings->get('serveStale', 1);
             $purgeTags = implode(',', $this->purgeObject->tags);
@@ -1832,7 +1851,7 @@ class plgSystemLSCache extends CMSPlugin {
         if ($this->isAdmin()) {
             $this->app->enqueueMessage(JText::_('COM_LSCACHE_PLUGIN_PURGEINFORMED'), "message");
         }
-        
+
     }
 
     private function recacheAction($recacheAll = true, $showProgress=false) {
@@ -1886,7 +1905,7 @@ class plgSystemLSCache extends CMSPlugin {
         if ($this->settings->get('cleanCache', 'purgeAllCache') == "purgeAllCache") {
             $this->settings->set('cleanCache', md5((String) rand()));
         }
-        
+
         $componentid = JComponentHelper::getComponent('com_lscache')->id;
         $table = JTable::getInstance('extension');
         $table->load($componentid);
@@ -1907,7 +1926,7 @@ class plgSystemLSCache extends CMSPlugin {
         $directives .= '## Uncomment the following directives to enable login remember me' . PHP_EOL;
         $directives .= '##RewriteCond %{HTTP_COOKIE} ^.*joomla_remember_me.*$' . PHP_EOL;
         $directives .= '##RewriteCond %{HTTP_COOKIE} !^.*_lscache_vary.*$' . PHP_EOL;
-        $directives .= '##RewriteRule .* - [E=cache-control:no-cache]' . PHP_EOL;        
+        $directives .= '##RewriteRule .* - [E=cache-control:no-cache]' . PHP_EOL;
         $directives .= '</IfModule>' . PHP_EOL;
         $directives .= '### LITESPEED_CACHE_END';
 
@@ -1929,12 +1948,12 @@ class plgSystemLSCache extends CMSPlugin {
         }
     }
 
-   
+
     protected function getVisitorIP() {
         $ip = '';
         $jinput = JFactory::getApplication()->input;
         $ip = $jinput->server->get('REMOTE_ADDR');
-        
+
         if ($jinput->server->get('HTTP_CLIENT_IP')) {
             $ip = $jinput->server->get('HTTP_CLIENT_IP');
         } else if($jinput->server->get('HTTP_X_FORWARDED_FOR')) {
@@ -1952,7 +1971,7 @@ class plgSystemLSCache extends CMSPlugin {
         }
         return $ip;
     }
-    
+
     protected function esiTokenForm(){
         $this->lscInstance->checkPrivateCookie();
         $this->lscInstance->cachePrivate('token','token');
@@ -1963,9 +1982,9 @@ class plgSystemLSCache extends CMSPlugin {
         $block = '<esi:include src="index.php?option=com_lscache&moduleid=-2" cache-control="private,no-vary" cache-tag="token" />' . PHP_EOL;
         return $block;
     }
-    
+
     protected function isAdmin(){
         return $this->app->isClient('administrator') ;
     }
-    
+
 }

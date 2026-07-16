@@ -197,6 +197,34 @@ class plgSystemLSCache extends CMSPlugin {
                 if (class_exists('vRequest', false) && !empty(vRequest::$routerSet)) {
                     vRequest::setVar($token, '1');
                 }
+                // Cached pages also round-trip the token VALUE as a literal
+                // 'token' parameter (e.g. mod_vpprime_minicart posts
+                // token=<marker>, then its ajax helper calls
+                // vRequest::setVar($_POST['token'], 1) as its own way of
+                // satisfying vmCheckToken()). That setVar() call can
+                // auto-vivify vRequest::$request BEFORE setRouterVars() ever
+                // runs, leaving a minimal snapshot that none of the patches
+                // above can reach. Rewriting the marker back to the real
+                // session token lets that native mechanism work again (and
+                // matches vmCheckToken()'s own token=<hash> fallback).
+                if ($app->input->post->get('token', '', 'raw') === 'lscache_formtoken') {
+                    $app->input->post->set('token', $token);
+                }
+                if ($app->input->get->get('token', '', 'raw') === 'lscache_formtoken') {
+                    $app->input->get->set('token', $token);
+                }
+                if ($app->input->request->get('token', '', 'raw') === 'lscache_formtoken') {
+                    $app->input->request->set('token', $token);
+                }
+                if (isset($_POST['token']) && $_POST['token'] === 'lscache_formtoken') {
+                    $_POST['token'] = $token;
+                }
+                if (isset($_GET['token']) && $_GET['token'] === 'lscache_formtoken') {
+                    $_GET['token'] = $token;
+                }
+                if (isset($_REQUEST['token']) && $_REQUEST['token'] === 'lscache_formtoken') {
+                    $_REQUEST['token'] = $token;
+                }
             }
             // Joomla.request() (core.js) reads csrf.token from the script-options
             // block and sends it as the X-CSRF-Token header; on a cached page that
@@ -207,6 +235,7 @@ class plgSystemLSCache extends CMSPlugin {
                 $app->input->server->set('HTTP_X_CSRF_TOKEN', $token);
                 $_SERVER['HTTP_X_CSRF_TOKEN'] = $token;
             }
+
         }
 
 

@@ -178,6 +178,20 @@ class plgSystemLSCache extends CMSPlugin {
                 // Also cover consumers validating via Session::checkToken('get'|'request')
                 $app->input->get->set($token,'1');
                 $app->input->request->set($token,'1');
+                // Joomla Input sub-inputs are detached copies of the superglobals,
+                // so code reading $_REQUEST/$_POST directly or merging them (e.g.
+                // VirtueMart's vRequest::setRouterVars()) would not see the values
+                // set above. Patch the superglobals as well.
+                $_GET[$token] = '1';
+                $_POST[$token] = '1';
+                $_REQUEST[$token] = '1';
+                // VirtueMart system plugins may have snapshotted the request even
+                // earlier (vRequest::setRouterVars() runs once and caches a copy);
+                // in that case patch the snapshot too, otherwise vmCheckToken()
+                // still reads the stale copy and rejects the request.
+                if (class_exists('vRequest', false) && !empty(vRequest::$routerSet)) {
+                    vRequest::setVar($token, '1');
+                }
             }
             // Joomla.request() (core.js) reads csrf.token from the script-options
             // block and sends it as the X-CSRF-Token header; on a cached page that

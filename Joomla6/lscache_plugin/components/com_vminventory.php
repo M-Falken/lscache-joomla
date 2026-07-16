@@ -5,7 +5,7 @@ defined('_JEXEC') or die;
  * @author    Grégory Roussel <siriusocteam@gmail.com>
  * @copyright 2026 Grégory Roussel. All rights reserved.
  * @license   http://www.gnu.org/licenses/gpl-2.0.html GNU/GPL
- * @version   1.5.2
+ * @version   1.5.3
  * @link      https://github.com/M-Falken
  *
  *  com_vminventory (https://extensions.joomla.org/extension/vm-inventory/)

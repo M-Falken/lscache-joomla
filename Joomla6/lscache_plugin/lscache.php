@@ -497,6 +497,7 @@ class plgSystemLSCache extends CMSPlugin {
                     'current' => 0,
                     'success' => 0,
                     'started' => time(),
+                    'updated' => time(),
                 ]));
             }
 
@@ -506,6 +507,7 @@ class plgSystemLSCache extends CMSPlugin {
                 'current' => 0,
                 'success' => 0,
                 'started' => time(),
+                'updated' => time(),
                 'error'   => empty($crawlList) ? Text::_('COM_LSCACHE_ERR_NO_URLS') : null,
             ]));
 
@@ -518,12 +520,15 @@ class plgSystemLSCache extends CMSPlugin {
                         litespeed_finish_request();
                     }
                     try {
-                        $this->crawlUrls($crawlList, false, true);
+                        // enforceDuration=false: le rebuild manuel doit tourner jusqu'au bout,
+                        // contrairement au recache automatique synchrone après purge (recacheAction).
+                        $this->crawlUrls($crawlList, false, true, false);
                     } catch (\Throwable $e) {
                         file_put_contents($pfClosure, json_encode([
                             'status'  => 'error',
                             'error'   => $e->getMessage() . ' in ' . basename($e->getFile()) . ':' . $e->getLine(),
                             'started' => time(),
+                            'updated' => time(),
                         ]));
                     }
                 }, $this, \get_class($this)));
@@ -1800,7 +1805,10 @@ class plgSystemLSCache extends CMSPlugin {
         if (!is_array($json)) {
             return ['status' => 'idle'];
         }
-        if (isset($json['started']) && (time() - $json['started']) > 3600) {
+        // Fichier considéré orphelin seulement si aucune écriture depuis 1h
+        // (pas depuis le début du crawl, qui peut légitimement durer plusieurs heures).
+        $lastUpdate = $json['updated'] ?? ($json['started'] ?? null);
+        if ($lastUpdate !== null && (time() - $lastUpdate) > 3600) {
             @unlink($progressFile);
             return ['status' => 'idle'];
         }
@@ -1848,7 +1856,7 @@ class plgSystemLSCache extends CMSPlugin {
         return $curlMenus;
     }
 
-    private function crawlUrls($urls, $output = true, $preRouted = false) {
+    private function crawlUrls($urls, $output = true, $preRouted = false, $enforceDuration = true) {
         $prevTimeLimit = (int) ini_get('max_execution_time');
         set_time_limit(0);
 
@@ -1880,6 +1888,7 @@ class plgSystemLSCache extends CMSPlugin {
             'current' => 0,
             'success' => 0,
             'started' => $progressStarted,
+            'updated' => $progressStarted,
         ]));
         if ($output) {
             //ob_implicit_flush(TRUE);
@@ -1958,6 +1967,7 @@ class plgSystemLSCache extends CMSPlugin {
                     'current' => $current,
                     'success' => $success,
                     'started' => $progressStarted,
+                    'updated' => time(),
                 ]));
             }
 
@@ -1975,7 +1985,7 @@ class plgSystemLSCache extends CMSPlugin {
                     ob_flush();
                 }
                 flush();
-            } else if (($current % 10 == 0) && ($this->microtimeMinus($begin, microtime()) > $recacheDuration)) {
+            } else if ($enforceDuration && ($current % 10 == 0) && ($this->microtimeMinus($begin, microtime()) > $recacheDuration)) {
                 $breakReason = Text::sprintf('COM_LSCACHE_ERR_DURATION_LIMIT', $current, $count);
                 $break = true;
                 break;
@@ -2000,6 +2010,7 @@ class plgSystemLSCache extends CMSPlugin {
             'current'  => $current,
             'success'  => $success,
             'started'  => $progressStarted,
+            'updated'  => time(),
             'finished' => time(),
             'error'    => $breakReason,
         ]));

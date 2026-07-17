@@ -50,7 +50,7 @@ $colSpan = $clientId === 1 ? 8 : 10;
         <strong id="lscache-rebuild-title"><?php echo Text::_('COM_LSCACHE_REBUILD_IN_PROGRESS'); ?></strong>
         <div class="progress" style="margin:6px 0 2px;height:20px;">
             <div id="lscache-rebuild-bar"
-                 class="progress-bar progress-bar-striped active"
+                 class="progress-bar progress-bar-striped progress-bar-animated"
                  role="progressbar"
                  style="width:0%;min-width:2em;transition:width 0.4s ease;">
             </div>
@@ -329,14 +329,14 @@ var _lscRebuild = {
                     }
                     setProgress(pct, current + ' / ' + total + ' pages (' + pct + '%) — ' + success + ' ' + _lscRebuild.cached + eta);
                 } else if (data.status === 'completed') {
-                    bar.classList.remove('active');
+                    bar.classList.remove('progress-bar-animated');
                     bar.style.background = '#5cb85c';
                     setProgress(100, _lscRebuild.completeMsg + ' ' + (data.success || 0) + ' / ' + (data.total || 0) + ' ' + _lscRebuild.pagesCached);
                     title.textContent = _lscRebuild.titleComplete;
                     clearInterval(timer);
                     setTimeout(function () { wrapper.style.display = 'none'; }, 8000);
                 } else if (data.status === 'error') {
-                    bar.classList.remove('active');
+                    bar.classList.remove('progress-bar-animated');
                     bar.style.background = '#d9534f';
                     var alertEl = wrapper.querySelector('.alert');
                     alertEl.className = alertEl.className.replace('alert-info', 'alert-danger');

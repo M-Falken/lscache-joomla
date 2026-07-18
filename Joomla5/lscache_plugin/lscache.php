@@ -1799,6 +1799,12 @@ class plgSystemLSCache extends CMSPlugin {
             return ['status' => 'idle'];
         }
         $progressFile = JPATH_ROOT . '/cache/lscache_rebuild_progress.json';
+
+        if ($this->app->getInput()->getInt('dismiss', 0) === 1) {
+            @unlink($progressFile);
+            return ['status' => 'idle'];
+        }
+
         if (!file_exists($progressFile)) {
             return ['status' => 'idle'];
         }
@@ -1806,10 +1812,14 @@ class plgSystemLSCache extends CMSPlugin {
         if (!is_array($json)) {
             return ['status' => 'idle'];
         }
-        // Fichier considéré orphelin seulement si aucune écriture depuis 1h
-        // (pas depuis le début du crawl, qui peut légitimement durer plusieurs heures).
+        // Un crawl encore actif ('starting'/'running') est considéré orphelin s'il n'a pas écrit
+        // depuis 1h (process mort). Un état terminal (completed/error) reste affiché indéfiniment
+        // jusqu'à ce que l'admin le consulte (dismiss) ou qu'un nouveau rebuild écrase le fichier —
+        // un rebuild peut durer plusieurs heures et personne ne regarde l'écran au moment précis
+        // où il se termine.
+        $terminal = in_array($json['status'] ?? '', ['completed', 'error'], true);
         $lastUpdate = $json['updated'] ?? ($json['started'] ?? null);
-        if ($lastUpdate !== null && (time() - $lastUpdate) > 3600) {
+        if (!$terminal && $lastUpdate !== null && (time() - $lastUpdate) > 3600) {
             @unlink($progressFile);
             return ['status' => 'idle'];
         }

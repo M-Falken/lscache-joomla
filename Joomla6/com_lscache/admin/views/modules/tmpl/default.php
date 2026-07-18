@@ -46,7 +46,8 @@ $colSpan = $clientId === 1 ? 8 : 10;
 <form action="<?php echo Route::_('index.php?option=com_lscache'); ?>" method="post" name="adminForm" id="adminForm">
 
 <div id="lscache-rebuild-progress" style="display:none;margin:10px 0;">
-    <div class="alert alert-info" style="margin-bottom:0;">
+    <div class="alert alert-info" style="margin-bottom:0;position:relative;">
+        <button type="button" id="lscache-rebuild-dismiss" class="btn-close" aria-label="Close" style="display:none;position:absolute;top:10px;right:10px;"></button>
         <strong id="lscache-rebuild-title"><?php echo Text::_('COM_LSCACHE_REBUILD_IN_PROGRESS'); ?></strong>
         <div class="progress" style="margin:6px 0 2px;height:20px;">
             <div id="lscache-rebuild-bar"
@@ -272,7 +273,8 @@ var _lscRebuild = {
     cached:        <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_CACHED')); ?>,
     completeMsg:   <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_COMPLETE_MSG')); ?>,
     pagesCached:   <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_PAGES_CACHED')); ?>,
-    remaining:     <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_REMAINING')); ?>
+    remaining:     <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_REMAINING')); ?>,
+    inDuration:    <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_IN_DURATION')); ?>
 };
 (function () {
     var progressUrl = 'index.php?option=com_ajax&plugin=lscache&group=system&format=json';
@@ -280,6 +282,8 @@ var _lscRebuild = {
     var bar         = document.getElementById('lscache-rebuild-bar');
     var text        = document.getElementById('lscache-rebuild-text');
     var title       = document.getElementById('lscache-rebuild-title');
+    var dismissBtn  = document.getElementById('lscache-rebuild-dismiss');
+    var alertEl     = wrapper.querySelector('.alert');
     var timer       = null;
     var errorCount  = 0;
 
@@ -296,6 +300,22 @@ var _lscRebuild = {
         }
         return '~' + seconds + 's ' + _lscRebuild.remaining;
     }
+
+    function formatDuration(seconds) {
+        seconds = Math.max(0, Math.round(seconds));
+        var h = Math.floor(seconds / 3600);
+        var m = Math.floor((seconds % 3600) / 60);
+        var s = seconds % 60;
+        if (h > 0) { return h + 'h' + m + 'm' + s + 's'; }
+        if (m > 0) { return m + 'm' + s + 's'; }
+        return s + 's';
+    }
+
+    dismissBtn.addEventListener('click', function () {
+        clearInterval(timer);
+        wrapper.style.display = 'none';
+        fetch(progressUrl + '&dismiss=1', {cache: 'no-store'}).catch(function () {});
+    });
 
     function poll() {
         fetch(progressUrl, {cache: 'no-store'})
@@ -315,6 +335,11 @@ var _lscRebuild = {
                 }
                 wrapper.style.display = 'block';
                 if (data.status === 'starting') {
+                    alertEl.className = 'alert alert-info';
+                    bar.classList.add('progress-bar-animated');
+                    bar.style.background = '';
+                    dismissBtn.style.display = 'none';
+                    title.textContent = _lscRebuild.inProgress;
                     setProgress(0, _lscRebuild.starting);
                 } else if (data.status === 'running') {
                     var total   = data.total   || 1;
@@ -331,17 +356,21 @@ var _lscRebuild = {
                 } else if (data.status === 'completed') {
                     bar.classList.remove('progress-bar-animated');
                     bar.style.background = '#5cb85c';
-                    setProgress(100, _lscRebuild.completeMsg + ' ' + (data.success || 0) + ' / ' + (data.total || 0) + ' ' + _lscRebuild.pagesCached);
-                    title.textContent = _lscRebuild.titleComplete;
+                    alertEl.className = 'alert alert-success';
+                    var duration = (data.finished && data.started) ? formatDuration(data.finished - data.started) : '';
+                    var msg = _lscRebuild.completeMsg + ' ' + (data.success || 0) + ' / ' + (data.total || 0) + ' ' + _lscRebuild.pagesCached;
+                    if (duration) { msg += ' ' + _lscRebuild.inDuration + ' ' + duration; }
+                    setProgress(100, msg);
+                    title.textContent = '✓ ' + _lscRebuild.titleComplete;
+                    dismissBtn.style.display = 'inline-block';
                     clearInterval(timer);
-                    setTimeout(function () { wrapper.style.display = 'none'; }, 8000);
                 } else if (data.status === 'error') {
                     bar.classList.remove('progress-bar-animated');
                     bar.style.background = '#d9534f';
-                    var alertEl = wrapper.querySelector('.alert');
-                    alertEl.className = alertEl.className.replace('alert-info', 'alert-danger');
+                    alertEl.className = 'alert alert-danger';
                     title.textContent = _lscRebuild.titleError;
                     text.textContent = data.error || 'Unknown error';
+                    dismissBtn.style.display = 'inline-block';
                     clearInterval(timer);
                 }
             })

@@ -23,6 +23,7 @@ use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Router\Route;
 use Joomla\CMS\Log\Log;
 use Joomla\CMS\Helper\ModuleHelper;
+use Joomla\CMS\Event\PageCache\GetKeyEvent;
 
 /**
  * LiteSpeed Cache Plugin for Joomla running on LiteSpeed Webserver (LSWS).
@@ -388,6 +389,17 @@ class plgSystemLSCache extends CMSPlugin {
         
         if(defined('LSCACHE_RENDERED')){
             return;
+        }
+
+        // getVaryKey() first runs in onAfterRoute, before the request has had any
+        // chance to mutate the session. Consent managers write their state late -
+        // com_gdpr stores the per category choices in the session from its own AJAX
+        // tasks - so the cookie set at route time still describes the previous
+        // state. Recompute it now that the request is complete, otherwise the next
+        // request is looked up under the stale variant and, being a cache hit, it
+        // never reaches PHP again: the visitor stays pinned to that variant.
+        if (!$this->isAdmin()) {
+            $this->checkVary();
         }
 
         if ($this->purgeObject->recacheAll) {
@@ -1697,6 +1709,38 @@ class plgSystemLSCache extends CMSPlugin {
         return '';
     }
 
+    /**
+     *  Collect the cache key parts published by Joomla page cache plugins.
+     *
+     *  plg_system_cache dispatches onPageCacheGetKey so extensions can declare
+     *  what makes their output differ between visitors. Honouring the same
+     *  event here lets those extensions vary the LiteSpeed cache too, the GDPR
+     *  consent state (com_gdpr, "auto manage caching" set to Advanced) being
+     *  the typical case: without it a single cached copy is shared by visitors
+     *  who accepted and refused cookies alike.
+     */
+    private function getPageCacheVary() {
+        if (!class_exists('Joomla\\CMS\\Event\\PageCache\\GetKeyEvent')) {
+            return '';
+        }
+
+        try {
+            $dispatcher = $this->getDispatcher();
+            PluginHelper::importPlugin('pagecache', null, true, $dispatcher);
+            $parts = $dispatcher->dispatch('onPageCacheGetKey', new GetKeyEvent('onPageCacheGetKey'))
+                                ->getArgument('result', array());
+        } catch (\Throwable $e) {
+            // A third party listener must never be able to break page delivery.
+            return '';
+        }
+
+        if (empty($parts)) {
+            return '';
+        }
+
+        return substr(md5(serialize($parts)), 0, 12);
+    }
+
     private function getVaryKey() {
         //$lang = Factory::getLanguage();
         //. $lang->getDefault();
@@ -1740,6 +1784,13 @@ class plgSystemLSCache extends CMSPlugin {
             }
         } else if (isset($this->vary['login'])) {
             unset($this->vary['login']);
+        }
+
+        $pageCacheVary = $this->getPageCacheVary();
+        if ($pageCacheVary !== '') {
+            $this->vary['pagecache'] = $pageCacheVary;
+        } else if (isset($this->vary['pagecache'])) {
+            unset($this->vary['pagecache']);
         }
 
         if (count($this->vary)) {

@@ -2120,6 +2120,69 @@ class plgSystemLSCache extends CMSPlugin {
         return $curlMenus;
     }
 
+    /**
+     * Résout l'URL à crawler pour une entrée de la liste.
+     *
+     * @return  string|null  null si l'entrée doit être ignorée (routage impossible).
+     */
+    private function resolveCrawlUrl($url, $preRouted) {
+        if ($preRouted) {
+            return $url;
+        }
+
+        try {
+            $curlurl = Route::link("site", $url);
+        } catch (\Throwable $ex) {
+            $this->log($ex->getMessage());
+            return null;
+        }
+
+        if (strpos($curlurl, '/component') === 0) {
+            $curlurl = '/' . $url;
+        }
+
+        if ((strpos($curlurl, '[') !== false) && (strpos($curlurl, ']') !== false)) {
+            $pos = strpos($curlurl, '?');
+            if ($pos === false) {
+                return null;
+            }
+            $curlurl = substr($curlurl, 0, $pos);
+        }
+
+        return $curlurl;
+    }
+
+    /**
+     * Prépare un handle curl pour le pré-chauffage d'une page.
+     */
+    private function newCrawlHandle($absoluteUrl, $root) {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $absoluteUrl);
+        curl_setopt($ch, CURLOPT_HEADER, false);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
+        curl_setopt($ch, CURLOPT_MAXREDIRS, 1);
+        // Sans timeout explicite curl attend indéfiniment : une seule page front qui
+        // pend bloquait tout le crawl, progression figée et aucun état d'erreur écrit.
+        // Une page qui met plus de 30 s à se rendre n'a pas sa place en pré-chauffage.
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        // Browser-like UA keeps WAFs and security plugins happy while the
+        // "lscache_runner" suffix stays identifiable in server logs.
+        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (compatible; lscache_runner)');
+        curl_setopt($ch, CURLOPT_ENCODING, "gzip");
+        curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+        curl_setopt($ch, CURLOPT_REFERER, $root . '/');
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+            'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language: ' . $this->app->getLanguage()->getTag(),
+            'X-LSCACHE: 1',
+        ));
+        return $ch;
+    }
+
     private function crawlUrls($urls, $output = true, $preRouted = false, $enforceDuration = true, $trackProgress = false) {
         $prevTimeLimit = (int) ini_get('max_execution_time');
         set_time_limit(0);
@@ -2134,14 +2197,33 @@ class plgSystemLSCache extends CMSPlugin {
             return "";
         }
 
-        $cached = 0;
         $acceptCode = array(200, 201);
         $begin = microtime();
         $success = 0;
         $current = 0;
-        //$router =  CMSApplication::getInstance('site')->getRouter('site'); //$appInstance->getRouter();
         $root = Uri::getInstance()->toString(array('scheme', 'host', 'port'));
         $recacheDuration = $this->settings->get('recacheDuration', 30) * 1000000;
+
+        // Pages demandées en parallèle. Le crawl passe l'essentiel de son temps à
+        // attendre le serveur, pas à travailler : les lancer par lots divise la durée
+        // d'autant. Borné à 20 pour ne pas saturer le pool PHP du site que l'on crawle.
+        $concurrency = (int) $this->settings->get('crawlConcurrency', 5);
+        if ($concurrency < 1) {
+            $concurrency = 1;
+        } else if ($concurrency > 20) {
+            $concurrency = 20;
+        }
+
+        // Pause entre deux lots, en millisecondes. Zéro par défaut : on crawle son
+        // propre site. L'ancienne version dormait systématiquement aussi longtemps que
+        // la requête avait duré, ce qui doublait la durée totale sans bénéficiaire.
+        $crawlDelay = (int) $this->settings->get('crawlDelay', 0);
+        if ($crawlDelay < 0) {
+            $crawlDelay = 0;
+        } else if ($crawlDelay > 10000) {
+            $crawlDelay = 10000;
+        }
+
         $break = false;
         $breakReason     = null;
         // Seul le rebuild manuel alimente le fichier de suivi. Le recache automatique
@@ -2161,7 +2243,6 @@ class plgSystemLSCache extends CMSPlugin {
             ]));
         }
         if ($output) {
-            //ob_implicit_flush(TRUE);
             echo '<h3>Rebuild LiteSpeed Cache may take several minutes</h3><br/>';
             if (ob_get_contents()){
                 ob_flush();
@@ -2169,75 +2250,82 @@ class plgSystemLSCache extends CMSPlugin {
             flush();
         }
 
-        foreach ($urls as $url) {
-            $ch = curl_init();
-            if ($preRouted) {
-                $curlurl = $url;
-            } else {
-                if ($this->isAdmin()) {
-                    try {
-                        $curlurl = Route::link("site",$url);
-                    } catch (Error $ex) {
-                        $this->log($ex->getMessage());
-                        continue;
+        $queue  = array_values($urls);
+        $offset = 0;
+
+        while (($offset < $count) && (!$break)) {
+            $batch   = array_slice($queue, $offset, $concurrency);
+            $offset += count($batch);
+
+            $mh      = curl_multi_init();
+            $handles = array();
+            $skipped = 0;
+
+            foreach ($batch as $url) {
+                $curlurl = $this->resolveCrawlUrl($url, $preRouted);
+                if ($curlurl === null) {
+                    $skipped++;
+                    continue;
+                }
+                $ch = $this->newCrawlHandle($root . $curlurl, $root);
+                curl_multi_add_handle($mh, $ch);
+                $handles[] = array($ch, $curlurl);
+            }
+
+            if (!empty($handles)) {
+                $active = null;
+                do {
+                    $mrc = curl_multi_exec($mh, $active);
+                } while ($mrc == CURLM_CALL_MULTI_PERFORM);
+
+                while ($active && ($mrc == CURLM_OK)) {
+                    if (curl_multi_select($mh, 1.0) === -1) {
+                        usleep(1000);
                     }
+                    do {
+                        $mrc = curl_multi_exec($mh, $active);
+                    } while ($mrc == CURLM_CALL_MULTI_PERFORM);
+                }
+            }
+
+            foreach ($handles as $handle) {
+                list($ch, $curlurl) = $handle;
+                $httpcode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                curl_multi_remove_handle($mh, $ch);
+
+                $current++;
+                $this->log($root . $curlurl);
+
+                if (in_array($httpcode, $acceptCode)) {
+                    $success++;
+                } else if ($httpcode == 428) {
+                    $this->log('httpcode:' . $httpcode);
+                    $breakReason = Text::_('COM_LSCACHE_ERR_CRAWLER_DISABLED');
+                    $break = true;
                 } else {
-                    $curlurl = Route::link("site",$url);
+                    $this->log('httpcode:' . $httpcode);
                 }
 
-                if(strpos($curlurl, '/component')===0){
-                    $curlurl ='/'.$url;
-                }
-
-                if((strpos($curlurl,'[')!==false) && (strpos($curlurl,']')!==false)){
-                    $curlurl = substr($curlurl, 0, strpos($curlurl,'?'));
+                if ($output) {
+                    $line = $current . '/' . $count . ' ' . $root . $curlurl . ' : ' . $httpcode;
+                    echo $cli ? ($line . PHP_EOL) : ($line . '<br/>' . PHP_EOL);
                 }
             }
 
-            curl_setopt($ch, CURLOPT_URL, $root.$curlurl);
-            curl_setopt($ch, CURLOPT_HEADER, false);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
-            curl_setopt($ch, CURLOPT_MAXREDIRS, 1);
-            // Sans timeout explicite curl attend indéfiniment : une seule page front qui
-            // pend bloquait tout le crawl, progression figée et aucun état d'erreur écrit.
-            // Une page qui met plus de 30 s à se rendre n'a pas sa place en pré-chauffage.
-            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-            // Browser-like UA keeps WAFs and security plugins happy while the
-            // "lscache_runner" suffix stays identifiable in server logs.
-            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (compatible; lscache_runner)');
-            curl_setopt($ch, CURLOPT_ENCODING, "gzip");
-            curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
-            curl_setopt($ch, CURLOPT_REFERER, $root.'/');
-            curl_setopt($ch, CURLOPT_HTTPHEADER, array(
-                'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language: ' . $this->app->getLanguage()->getTag(),
-                'X-LSCACHE: 1',
-            ));
-            $start = microtime();
+            curl_multi_close($mh);
+            // Une entrée non routable reste comptée : sinon la barre ne peut pas atteindre 100 %.
+            $current += $skipped;
 
-            $buffer = curl_exec($ch);
-            $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $this->log( $root.$url);
-
-            if (in_array($httpcode, $acceptCode)) {
-                $success++;
-            } else if($httpcode==428){
-                $this->log('httpcode:'.$httpcode);
-                $breakReason = Text::_('COM_LSCACHE_ERR_CRAWLER_DISABLED');
-                $break = true;
-                break;
-            } else {
-                $this->log('httpcode:'.$httpcode);
+            if ($output) {
+                if (ob_get_contents()){
+                    ob_flush();
+                }
+                flush();
             }
-            $current++;
 
-            // Tous les 5 URLs OU toutes les 3 secondes : sur un site lent les 5 premières
-            // pages peuvent prendre une minute, la barre restait affichée à 0 tout ce temps.
-            if ($trackProgress && (($current % 5 === 0) || ($current === $count) || ((time() - $lastFlush) >= 3))) {
+            // Flush tous les lots, throttlé à 3 secondes : sur un site lent la barre
+            // restait affichée à 0 pendant tout le premier lot.
+            if ($trackProgress && ((($current >= $count) || $break) || ((time() - $lastFlush) >= 3))) {
                 $lastFlush = time();
                 file_put_contents($progressFile, json_encode([
                     'status'  => 'running',
@@ -2249,29 +2337,14 @@ class plgSystemLSCache extends CMSPlugin {
                 ]));
             }
 
-            if ($output) {
-
-                echo 'curl url: ' . $root . '/' . $url . '<br/>' .  PHP_EOL;
-
-                if ($cli) {
-                    echo $current . '/' . $count . ' ' . $root.$curlurl . ' : ' . $httpcode . PHP_EOL;
-                } else {
-                    echo $current . '/' . $count . ' ' . $root.$curlurl . ' : ' . $httpcode . '<br/>' . PHP_EOL;
-                }
-
-                if (ob_get_contents()){
-                    ob_flush();
-                }
-                flush();
-            } else if ($enforceDuration && ($current % 10 == 0) && ($this->microtimeMinus($begin, microtime()) > $recacheDuration)) {
+            if ((!$break) && $enforceDuration && ($this->microtimeMinus($begin, microtime()) > $recacheDuration)) {
                 $breakReason = Text::sprintf('COM_LSCACHE_ERR_DURATION_LIMIT', $current, $count);
                 $break = true;
-                break;
             }
 
-            $end = microtime();
-            $diff = $this->microtimeMinus($start, $end);
-            usleep(round($diff));
+            if ((!$break) && ($crawlDelay > 0) && ($offset < $count)) {
+                usleep($crawlDelay * 1000);
+            }
         }
 
         if($output && (!$break)){

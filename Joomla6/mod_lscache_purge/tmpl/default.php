@@ -12,7 +12,7 @@ $text = Text::_('MOD_LSCACHE_PURGE_TITLE');
 	<div class="header-item-icon">
 		<span class="icon-trash" aria-hidden="true"></span>
 	</div>
-    
+
         <div class="header-item-text">
                 <?php echo $text; ?>
         </div>

@@ -1715,6 +1715,34 @@ class plgSystemLSCache extends CMSPlugin {
     }
 
     /**
+     * Le visiteur porte-t-il une décision de consentement enregistrée ?
+     *
+     * Les noms de cookies viennent de la configuration plutôt que du code : ce plugin
+     * n'a pas à connaître le gestionnaire de consentement installé. Champ vide = on ne
+     * sait pas distinguer un visiteur par défaut d'un visiteur décidé, on fait donc
+     * varier dans tous les cas. L'exactitude du contenu prime sur le taux de hit.
+     */
+    private function hasConsentDecision() {
+        $configured = (string) $this->settings->get('consentCookies', 'cookieconsent_status');
+        $names      = array_filter(array_map('trim', explode(',', $configured)), 'strlen');
+
+        // Aucun nom exploitable - champ vide, blancs, virgules seules : on ne sait pas
+        // distinguer un visiteur par défaut d'un visiteur décidé, on fait donc varier dans
+        // tous les cas. L'exactitude du contenu prime sur le taux de hit.
+        if (empty($names)) {
+            return true;
+        }
+
+        foreach ($names as $name) {
+            if (!empty($_COOKIE[$name])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      *  Collect the cache key parts published by Joomla page cache plugins.
      *
      *  plg_system_cache dispatches onPageCacheGetKey so extensions can declare
@@ -1726,6 +1754,17 @@ class plgSystemLSCache extends CMSPlugin {
      */
     private function getPageCacheVary() {
         if (!class_exists('Joomla\\CMS\\Event\\PageCache\\GetKeyEvent')) {
+            return '';
+        }
+
+        // Un visiteur qui n'a rien décidé voit la sortie par défaut du site, identique
+        // pour tous : une seule copie partagée est exacte. Faire varier sur cet état
+        // exilait dans un compartiment jamais pré-chauffé toute première visite, le
+        // crawler du rebuild et chaque audit PageSpeed — qui arrivent tous sans cookie
+        // et ne font qu'une seule vue, donc un miss garanti sur une page pourtant
+        // identique à la copie partagée. Seul un visiteur ayant réellement tranché
+        // obtient sa propre variante.
+        if (!$this->hasConsentDecision()) {
             return '';
         }
 

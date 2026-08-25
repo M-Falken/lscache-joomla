@@ -116,29 +116,6 @@ class LSCacheControllerModules extends AdminController {
         $app->triggerEvent("onLSCacheRebuildAll");
     }
 
-    public function rebuildProgress() {
-        $progressFile = JPATH_ROOT . '/cache/lscache_rebuild_progress.json';
-        $app = Factory::getApplication();
-        if (file_exists($progressFile)) {
-            $data = file_get_contents($progressFile);
-            if ($data === false) {
-                echo json_encode(['status' => 'idle']);
-                $app->close();
-                return;
-            }
-            $json = json_decode($data, true);
-            if (is_array($json) && isset($json['started']) && (time() - $json['started']) > 3600) {
-                @unlink($progressFile);
-                echo json_encode(['status' => 'idle']);
-            } else {
-                echo $data;
-            }
-        } else {
-            echo json_encode(['status' => 'idle']);
-        }
-        $app->close();
-    }
-
     public function purgeModule() {
 
         $app = Factory::getApplication();

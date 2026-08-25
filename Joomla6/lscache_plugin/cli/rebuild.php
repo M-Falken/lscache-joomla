@@ -180,6 +180,15 @@ switch ($result['status']) {
         }
         lsc_out('  sef=' . (int) $result['sef'] . ' sef_rewrite=' . (int) $result['sefRewrite']
               . ((int) $result['sefRewrite'] === 0 ? '  <-- index.php restera dans les URLs' : ''));
+        $perdues = (int) $result['failedRoute'] + (int) $result['failedBucket'];
+        if ($perdues > 0) {
+            lsc_out('  ECARTEES au routage : ' . $perdues
+                  . ' (exception : ' . (int) $result['failedRoute']
+                  . ', crochets : ' . (int) $result['failedBucket'] . ')', true);
+            if (!empty($result['firstFailure'])) {
+                lsc_out('  premiere cause : ' . $result['firstFailure'], true);
+            }
+        }
         foreach (array_slice($result['urls'], 0, 20) as $url) {
             lsc_out('  ' . $siteUrl . $url);
         }

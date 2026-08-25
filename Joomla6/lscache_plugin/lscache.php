@@ -1966,7 +1966,10 @@ class plgSystemLSCache extends CMSPlugin {
             );
         }
 
-        $crawlList = array();
+        $crawlList    = array();
+        $failedRoute  = 0;
+        $failedBucket = 0;
+        $firstFailure = null;
         foreach ($rawList as $path) {
             try {
                 // xhtml=false → pas d'encodage des & en &amp; (crucial pour curl)
@@ -1977,12 +1980,21 @@ class plgSystemLSCache extends CMSPlugin {
                 if ((strpos($routed, '[') !== false) && (strpos($routed, ']') !== false)) {
                     $pos = strpos($routed, '?');
                     if ($pos === false) {
+                        $failedBucket++;
                         continue;
                     }
                     $routed = substr($routed, 0, $pos);
                 }
                 $crawlList[] = $routed;
             } catch (\Throwable $e) {
+                // Ne plus avaler l'echec en silence : c'est ici que des milliers d'URLs
+                // peuvent disparaitre sans que rien ne le signale.
+                $failedRoute++;
+                if ($firstFailure === null) {
+                    $firstFailure = get_class($e) . ' : ' . $e->getMessage()
+                                  . ' [' . basename($e->getFile()) . ':' . $e->getLine() . ']'
+                                  . ' pour ' . $path;
+                }
                 continue;
             }
         }
@@ -1990,9 +2002,12 @@ class plgSystemLSCache extends CMSPlugin {
         return array(
             'urls'       => $crawlList,
             'error'      => empty($crawlList) ? Text::_('COM_LSCACHE_ERR_NO_URLS') : null,
-            'menuCount'  => $menuCount,
-            'compCount'  => count($rawList) - $menuCount,
-            'components' => $resolved,
+            'menuCount'    => $menuCount,
+            'compCount'    => count($rawList) - $menuCount,
+            'components'   => $resolved,
+            'failedRoute'  => $failedRoute,
+            'failedBucket' => $failedBucket,
+            'firstFailure' => $firstFailure,
         );
     }
 
@@ -2069,9 +2084,12 @@ class plgSystemLSCache extends CMSPlugin {
                 'error'      => $collected['error'],
                 'menuCount'  => $collected['menuCount'],
                 'compCount'  => $collected['compCount'],
-                'components' => $collected['components'],
-                'sef'        => (int) $this->app->get('sef', 0),
-                'sefRewrite' => (int) $this->app->get('sef_rewrite', 0),
+                'components'   => $collected['components'],
+                'sef'          => (int) $this->app->get('sef', 0),
+                'sefRewrite'   => (int) $this->app->get('sef_rewrite', 0),
+                'failedRoute'  => $collected['failedRoute'] ?? 0,
+                'failedBucket' => $collected['failedBucket'] ?? 0,
+                'firstFailure' => $collected['firstFailure'] ?? null,
             );
         }
 

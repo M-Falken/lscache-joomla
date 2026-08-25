@@ -179,7 +179,12 @@ class plgSystemLSCache extends CMSPlugin {
             $this->pageCachable = false;
             $this->purgeAdmin($option);
         } else {
-            $this->checkVary();
+            // Évaluer sans écrire. La clé calculée ici est provisoire : les gestionnaires
+            // de consentement peuplent la session pendant le rendu, si bien que la valeur
+            // du routage diffère de la valeur définitive. Émettre les deux plaçait deux
+            // Set-Cookie _lscache_vary contradictoires dans la même réponse. L'écriture
+            // qui fait foi a lieu en fin de requête, dans onAfterRender().
+            $this->checkVary("", false);
             if($app->input->get("lscache_formtoken")=="1"){
                 $token = Session::getFormToken();
                 $app->input->post->set($token,'1');
@@ -1688,7 +1693,15 @@ class plgSystemLSCache extends CMSPlugin {
      *
      * @since   0.1
      */
-    private function checkVary($value = "") {
+    /**
+     * Compare la clé de variance du visiteur à celle que porte son cookie.
+     *
+     * $writeCookie permet d'évaluer sans écrire. getVaryKey() a des effets de bord
+     * dont le pipeline dépend (remplissage de $this->vary, pageCachable, cookie
+     * privé), il faut donc toujours l'appeler tôt — mais une seule écriture, la
+     * dernière, doit atteindre le navigateur : voir onAfterRoute().
+     */
+    private function checkVary($value = "", $writeCookie = true) {
 
         if ($value == "") {
             $value = $this->getVaryKey();
@@ -1698,19 +1711,25 @@ class plgSystemLSCache extends CMSPlugin {
 
         if ($value == "") {
             if (isset($_COOKIE[LiteSpeedCacheBase::VARY_COOKIE])) {
-                $inputCookie->set(LiteSpeedCacheBase::VARY_COOKIE, null, time() - 1, '/');
+                if ($writeCookie) {
+                    $inputCookie->set(LiteSpeedCacheBase::VARY_COOKIE, null, time() - 1, '/');
+                }
                 return false;
             }
             return true;
         }
 
         if (!isset($_COOKIE[LiteSpeedCacheBase::VARY_COOKIE])) {
-            $inputCookie->set(LiteSpeedCacheBase::VARY_COOKIE, $value, 0, '/');
+            if ($writeCookie) {
+                $inputCookie->set(LiteSpeedCacheBase::VARY_COOKIE, $value, 0, '/');
+            }
             return false;
         }
 
         if ($_COOKIE[LiteSpeedCacheBase::VARY_COOKIE] != $value) {
-            $inputCookie->set(LiteSpeedCacheBase::VARY_COOKIE, $value, 0, '/');
+            if ($writeCookie) {
+                $inputCookie->set(LiteSpeedCacheBase::VARY_COOKIE, $value, 0, '/');
+            }
             return false;
         }
 

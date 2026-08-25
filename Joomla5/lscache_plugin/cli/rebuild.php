@@ -168,6 +168,18 @@ if ($result === null) {
 switch ($result['status']) {
     case 'dry-run':
         lsc_out('Simulation : ' . (int) $result['total'] . ' URL(s) seraient crawlees.');
+        lsc_out('  elements de menu : ' . (int) $result['menuCount']);
+        lsc_out('  URLs composants  : ' . (int) $result['compCount']);
+        if (empty($result['components'])) {
+            lsc_out('  composants       : AUCUN - verifiez « Remettre en cache les URL generees'
+                  . ' par le composant » dans les reglages LSCache, puis enregistrez.');
+        } else {
+            foreach ($result['components'] as $name => $n) {
+                lsc_out('  composant ' . $name . ' : ' . (int) $n . ' URL(s)');
+            }
+        }
+        lsc_out('  sef=' . (int) $result['sef'] . ' sef_rewrite=' . (int) $result['sefRewrite']
+              . ((int) $result['sefRewrite'] === 0 ? '  <-- index.php restera dans les URLs' : ''));
         foreach (array_slice($result['urls'], 0, 20) as $url) {
             lsc_out('  ' . $siteUrl . $url);
         }

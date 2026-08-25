@@ -1944,16 +1944,25 @@ class plgSystemLSCache extends CMSPlugin {
             if (empty($components)) {
                 $components = $this->settings->get('recacheComponent', false);
             }
+
+            $menuCount = count($rawList);
+            $resolved  = array();
             foreach ((array) $components as $component) {
                 if (empty($component)) {
                     continue;
                 }
-                $rawList = array_merge($this->componentHelper->getComMap($component), $rawList);
+                $comUrls = $this->componentHelper->getComMap($component);
+                $resolved[$component] = count($comUrls);
+                $rawList = array_merge($comUrls, $rawList);
             }
         } catch (\Throwable $e) {
             return array(
-                'urls'  => array(),
-                'error' => Text::sprintf('COM_LSCACHE_ERR_URL_COLLECTION', $e->getMessage()),
+                'urls'       => array(),
+                'error'      => Text::sprintf('COM_LSCACHE_ERR_URL_COLLECTION', $e->getMessage())
+                                . ' [' . basename($e->getFile()) . ':' . $e->getLine() . ']',
+                'menuCount'  => 0,
+                'compCount'  => 0,
+                'components' => array(),
             );
         }
 
@@ -1979,8 +1988,11 @@ class plgSystemLSCache extends CMSPlugin {
         }
 
         return array(
-            'urls'  => $crawlList,
-            'error' => empty($crawlList) ? Text::_('COM_LSCACHE_ERR_NO_URLS') : null,
+            'urls'       => $crawlList,
+            'error'      => empty($crawlList) ? Text::_('COM_LSCACHE_ERR_NO_URLS') : null,
+            'menuCount'  => $menuCount,
+            'compCount'  => count($rawList) - $menuCount,
+            'components' => $resolved,
         );
     }
 
@@ -2051,10 +2063,15 @@ class plgSystemLSCache extends CMSPlugin {
 
         if ($dryRun) {
             return array(
-                'status' => 'dry-run',
-                'total'  => count($crawlList),
-                'urls'   => $crawlList,
-                'error'  => $collected['error'],
+                'status'     => 'dry-run',
+                'total'      => count($crawlList),
+                'urls'       => $crawlList,
+                'error'      => $collected['error'],
+                'menuCount'  => $collected['menuCount'],
+                'compCount'  => $collected['compCount'],
+                'components' => $collected['components'],
+                'sef'        => (int) $this->app->get('sef', 0),
+                'sefRewrite' => (int) $this->app->get('sef_rewrite', 0),
             );
         }
 
@@ -2095,8 +2112,12 @@ class plgSystemLSCache extends CMSPlugin {
         $curlMenus = array();
         if (!empty($menus) && is_array($menus)) {
             foreach ($menus as $menu) {
-                // access > 1 = non-public (Registered/Special/...) → crawler anonyme = 403
-                if (($menu->type != "alias") && ((int)$menu->access <= 1)) {
+                // access > 1 = non-public (Registered/Special/...) → crawler anonyme = 403.
+                // Et seul le type « component » rend une page qui lui soit propre : « url »
+                // pointe ailleurs et son lien absolu se retrouvait concaténé au domaine du
+                // site (double domaine), tandis que « separator », « heading », « container »
+                // et « alias » n'ont pas de lien exploitable et retombaient sur l'accueil.
+                if (($menu->type === 'component') && ((int)$menu->access <= 1)) {
                     $menu->path = $menu->link . '&Itemid=' . $menu->id;
                     if(!empty($menu->link)){
                         if($menu->language!="*"){
@@ -2171,6 +2192,19 @@ class plgSystemLSCache extends CMSPlugin {
             'X-LSCACHE: 1',
         ));
         return $ch;
+    }
+
+    /**
+     * Compose l'URL absolue à demander.
+     *
+     * Une entrée peut déjà être absolue (élément de menu de type « url »). La préfixer
+     * produisait « https://site.frhttps://site.fr/... ». On la laisse telle quelle.
+     */
+    private function absoluteCrawlUrl($root, $url) {
+        if (preg_match('#^https?://#i', $url)) {
+            return $url;
+        }
+        return $root . $url;
     }
 
     private function crawlUrls($urls, $output = true, $preRouted = false, $enforceDuration = true, $trackProgress = false) {
@@ -2257,7 +2291,7 @@ class plgSystemLSCache extends CMSPlugin {
                     $skipped++;
                     continue;
                 }
-                $ch = $this->newCrawlHandle($root . $curlurl, $root);
+                $ch = $this->newCrawlHandle($this->absoluteCrawlUrl($root, $curlurl), $root);
                 curl_multi_add_handle($mh, $ch);
                 $handles[] = array($ch, $curlurl);
             }

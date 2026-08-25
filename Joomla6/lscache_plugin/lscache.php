@@ -2328,51 +2328,66 @@ class plgSystemLSCache extends CMSPlugin {
             flush();
         }
 
-        $queue  = array_values($urls);
-        $offset = 0;
+        // Fenetre glissante : on garde en permanence $concurrency requetes en vol et on
+        // relance des qu'une se termine. La version par lots attendait le membre le plus
+        // lent de chaque groupe avant d'en lancer un nouveau : melangez une page en cache
+        // (0,13 s) et une page a generer (~1,4 s) et le lot entier coutait 1,4 s, soit
+        // 0,28 s/page quelle que soit la proportion de pages deja chaudes. C'est ce qui
+        // rendait une reconstruction aussi lente sur un cache tiede que sur un cache vide.
+        $queue    = array_values($urls);
+        $next     = 0;
+        $inFlight = array();
+        $mh       = curl_multi_init();
 
-        while (($offset < $count) && (!$break)) {
-            $batch   = array_slice($queue, $offset, $concurrency);
-            $offset += count($batch);
+        while (true) {
+            // Remplir la fenetre. Une entree non routable ne consomme pas de place.
+            while ((!$break) && ($next < $count) && (count($inFlight) < $concurrency)) {
+                $path = $queue[$next];
+                $next++;
 
-            $mh      = curl_multi_init();
-            $handles = array();
-            $skipped = 0;
-
-            foreach ($batch as $url) {
-                $curlurl = $this->resolveCrawlUrl($url, $preRouted);
+                $curlurl = $this->resolveCrawlUrl($path, $preRouted);
                 if ($curlurl === null) {
-                    $skipped++;
+                    // Comptee comme traitee, sinon la barre ne peut pas atteindre 100 %.
+                    $current++;
                     continue;
                 }
+
+                if (($crawlDelay > 0) && ($current > 0)) {
+                    usleep($crawlDelay * 1000);
+                }
+
                 $ch = $this->newCrawlHandle($this->absoluteCrawlUrl($root, $curlurl), $root);
                 curl_multi_add_handle($mh, $ch);
-                $handles[] = array($ch, $curlurl);
+                $inFlight[spl_object_id($ch)] = $curlurl;
             }
 
-            if (!empty($handles)) {
-                $active = null;
-                do {
-                    $mrc = curl_multi_exec($mh, $active);
-                } while ($mrc == CURLM_CALL_MULTI_PERFORM);
+            if (empty($inFlight)) {
+                break;
+            }
 
-                while ($active && ($mrc == CURLM_OK)) {
-                    if (curl_multi_select($mh, 1.0) === -1) {
-                        usleep(1000);
-                    }
-                    do {
-                        $mrc = curl_multi_exec($mh, $active);
-                    } while ($mrc == CURLM_CALL_MULTI_PERFORM);
+            $active = null;
+            do {
+                $mrc = curl_multi_exec($mh, $active);
+            } while ($mrc === CURLM_CALL_MULTI_PERFORM);
+
+            if ($active && ($mrc === CURLM_OK)) {
+                if (curl_multi_select($mh, 1.0) === -1) {
+                    usleep(1000);
                 }
             }
 
-            foreach ($handles as $handle) {
-                list($ch, $curlurl) = $handle;
+            // Recolter tout ce qui vient de se terminer, et liberer autant de places.
+            while (($info = curl_multi_info_read($mh)) !== false) {
+                $ch  = $info['handle'];
+                $id  = spl_object_id($ch);
+                $url = isset($inFlight[$id]) ? $inFlight[$id] : '';
+                unset($inFlight[$id]);
+
                 $httpcode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
                 curl_multi_remove_handle($mh, $ch);
 
                 $current++;
-                $this->log($root . $curlurl);
+                $this->log($root . $url);
 
                 if (in_array($httpcode, $acceptCode)) {
                     $success++;
@@ -2385,14 +2400,10 @@ class plgSystemLSCache extends CMSPlugin {
                 }
 
                 if ($output) {
-                    $line = $current . '/' . $count . ' ' . $root . $curlurl . ' : ' . $httpcode;
+                    $line = $current . '/' . $count . ' ' . $root . $url . ' : ' . $httpcode;
                     echo $cli ? ($line . PHP_EOL) : ($line . '<br/>' . PHP_EOL);
                 }
             }
-
-            curl_multi_close($mh);
-            // Une entrée non routable reste comptée : sinon la barre ne peut pas atteindre 100 %.
-            $current += $skipped;
 
             if ($output) {
                 if (ob_get_contents()){
@@ -2401,8 +2412,7 @@ class plgSystemLSCache extends CMSPlugin {
                 flush();
             }
 
-            // Flush tous les lots, throttlé à 3 secondes : sur un site lent la barre
-            // restait affichée à 0 pendant tout le premier lot.
+            // Throttle a 3 secondes : sur un site lent la barre restait affichee a 0.
             if ($trackProgress && ((($current >= $count) || $break) || ((time() - $lastFlush) >= 3))) {
                 $lastFlush = time();
                 file_put_contents($progressFile, json_encode([
@@ -2419,11 +2429,9 @@ class plgSystemLSCache extends CMSPlugin {
                 $breakReason = Text::sprintf('COM_LSCACHE_ERR_DURATION_LIMIT', $current, $count);
                 $break = true;
             }
-
-            if ((!$break) && ($crawlDelay > 0) && ($offset < $count)) {
-                usleep($crawlDelay * 1000);
-            }
         }
+
+        curl_multi_close($mh);
 
         if($output && (!$break)){
             echo '100%';

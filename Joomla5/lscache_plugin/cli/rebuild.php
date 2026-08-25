@@ -40,7 +40,7 @@ if (PHP_SAPI !== 'cli') {
     exit('This script must be run from the command line.');
 }
 
-$options = getopt('', array('url::', 'dry-run', 'list', 'limit::', 'quiet', 'help'));
+$options = getopt('', array('url::', 'dry-run', 'list', 'check::', 'limit::', 'quiet', 'help'));
 
 if (isset($options['help'])) {
     $doc = file_get_contents(__FILE__);
@@ -55,6 +55,9 @@ if ($listOnly) {
     $quiet = true;   // la liste seule, exploitable par grep
 }
 $limit  = isset($options['limit']) ? (int) $options['limit'] : 0;
+$check  = array_key_exists('check', $options)
+    ? (($options['check'] === false || $options['check'] === '') ? 100 : (int) $options['check'])
+    : 0;
 
 function lsc_out($message, $isError = false)
 {
@@ -192,7 +195,7 @@ try {
     // URLs sont ecartees au routage.
     PluginHelper::importPlugin('behaviour');
     PluginHelper::importPlugin('system', 'lscache');
-    $results = $app->triggerEvent('onLSCacheRebuildCli', array($limit, $dryRun));
+    $results = $app->triggerEvent('onLSCacheRebuildCli', array($limit, $dryRun, $check));
 } catch (\Throwable $e) {
     lsc_out('Echec de la reconstruction : ' . $e->getMessage(), true);
     lsc_out('  ' . get_class($e) . ' dans ' . basename($e->getFile()) . ':' . $e->getLine(), true);
@@ -215,6 +218,23 @@ if ($result === null) {
 if (isset($result['concurrency'])) {
     lsc_out('Reglages   : ' . (int) $result['concurrency'] . ' page(s) en parallele, pause '
           . (int) $result['delay'] . ' ms entre lancements');
+}
+
+if ($result['status'] === 'coverage') {
+    $pct = $result['sampled'] ? round(100 * $result['hit'] / $result['sampled']) : 0;
+    lsc_out(sprintf('Couverture : %d/%d URL(s) echantillonnees deja en cache (%d%%) sur %d au total',
+        $result['hit'], $result['sampled'], $pct, $result['total']));
+    lsc_out('');
+    lsc_out('  tranche de la liste        en cache   froides   taux');
+    foreach ($result['bands'] as $b) {
+        $n = $b['hit'] + $b['miss'];
+        lsc_out(sprintf('  %6d - %-6d %10d %9d   %3d%%',
+            $b['from'], $b['to'], $b['hit'], $b['miss'], $n ? round(100 * $b['hit'] / $n) : 0));
+    }
+    lsc_out('');
+    lsc_out('Un taux qui monte du debut vers la fin de liste = le cache evince faute de place.');
+    lsc_out('Un taux uniformement bas = les pages ne sont pas mises en cache du tout.');
+    exit(0);
 }
 
 switch ($result['status']) {

@@ -2164,6 +2164,72 @@ class plgSystemLSCache extends CMSPlugin {
     }
 
     /**
+     * Taux de couverture reel du cache, mesure par echantillonnage.
+     *
+     * LiteSpeed n'expose aucune API interrogeable depuis PHP : le seul signal disponible
+     * est l'en-tete X-LiteSpeed-Cache de chaque reponse. On echantillonne donc la liste a
+     * pas regulier - et non au hasard, pour que deux mesures soient comparables - et on
+     * compte les hit. Le decoupage en tranches est le point important : si le cache evince
+     * faute de place, les URLs du debut de liste seront froides et celles de la fin
+     * chaudes, ce qu'un taux global masquerait.
+     *
+     * Les requetes n'utilisent pas newCrawlHandle() : elles ne doivent RIEN rechauffer,
+     * sinon la mesure fausserait ce qu'elle observe.
+     *
+     * @return  array
+     */
+    private function checkCacheCoverage($urls, $sample = 100) {
+        $count = count($urls);
+        if ($count < 1) {
+            return array('sampled' => 0, 'hit' => 0, 'miss' => 0, 'bands' => array());
+        }
+
+        $sample = max(1, min((int) $sample, $count));
+        $step   = $count / $sample;
+        $root   = Uri::getInstance()->toString(array('scheme', 'host', 'port'));
+
+        $bandCount = min(5, $sample);
+        $bands     = array_fill(0, $bandCount, array('hit' => 0, 'miss' => 0, 'from' => 0, 'to' => 0));
+        $hit = 0;
+        $miss = 0;
+
+        for ($i = 0; $i < $sample; $i++) {
+            $index = (int) floor($i * $step);
+            $url   = $urls[$index];
+
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL, $this->absoluteCrawlUrl($root, $url));
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_HEADER, true);
+            curl_setopt($ch, CURLOPT_NOBODY, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
+            curl_setopt($ch, CURLOPT_MAXREDIRS, 1);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (compatible; lscache_probe)');
+            $response = curl_exec($ch);
+
+            $isHit = (is_string($response)
+                && preg_match('/^x-litespeed-cache:\s*hit/mi', $response) === 1);
+
+            $band = min($bandCount - 1, (int) floor($i / max(1, $sample / $bandCount)));
+            if ($isHit) {
+                $hit++;
+                $bands[$band]['hit']++;
+            } else {
+                $miss++;
+                $bands[$band]['miss']++;
+            }
+            $bands[$band]['from'] = $bands[$band]['from'] ?: $index + 1;
+            $bands[$band]['to']   = $index + 1;
+        }
+
+        return array('sampled' => $sample, 'total' => $count, 'hit' => $hit, 'miss' => $miss, 'bands' => $bands);
+    }
+
+    /**
      * Point d'entrée du crawl en ligne de commande — voir cli/rebuild.php.
      *
      * Le rebuild lancé depuis l'admin tourne dans un processus détaché après
@@ -2174,7 +2240,7 @@ class plgSystemLSCache extends CMSPlugin {
      * Écrit dans le même fichier de suivi que le bouton admin, donc la carte de
      * progression affiche un rebuild CLI sans rien avoir à changer.
      */
-    public function onLSCacheRebuildCli($limit = 0, $dryRun = false) {
+    public function onLSCacheRebuildCli($limit = 0, $dryRun = false, $check = 0) {
         if (PHP_SAPI !== 'cli') {
             return array('status' => 'error', 'error' => 'onLSCacheRebuildCli is CLI only');
         }
@@ -2198,6 +2264,12 @@ class plgSystemLSCache extends CMSPlugin {
         $limit = (int) $limit;
         if (($limit > 0) && (count($crawlList) > $limit)) {
             $crawlList = array_slice($crawlList, 0, $limit);
+        }
+
+        if ($check > 0) {
+            $stats = $this->checkCacheCoverage($crawlList, $check);
+            $stats['status'] = 'coverage';
+            return $stats;
         }
 
         if ($dryRun) {

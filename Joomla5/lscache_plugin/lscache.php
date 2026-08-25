@@ -2330,7 +2330,7 @@ class plgSystemLSCache extends CMSPlugin {
         curl_setopt($ch, CURLOPT_REFERER, $root . '/');
         curl_setopt($ch, CURLOPT_HTTPHEADER, array(
             'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language: ' . $this->app->getLanguage()->getTag(),
+            'Accept-Language: ' . $this->crawlLanguageTag(),
             'X-LSCACHE: 1',
         ));
         return $ch;
@@ -2347,6 +2347,20 @@ class plgSystemLSCache extends CMSPlugin {
             return $url;
         }
         return $root . $url;
+    }
+
+    /**
+     * Tag de langue à annoncer au crawl.
+     *
+     * getLanguage() rend null tant que l'application n'a pas ete initialisee - le cas hors
+     * requete web. On retombe alors sur la langue configuree du site plutot que de fataliser.
+     */
+    private function crawlLanguageTag() {
+        $language = $this->app->getLanguage();
+        if ($language !== null) {
+            return $language->getTag();
+        }
+        return (string) $this->app->get('language', 'en-GB');
     }
 
     private function crawlUrls($urls, $output = true, $preRouted = false, $enforceDuration = true, $trackProgress = false) {

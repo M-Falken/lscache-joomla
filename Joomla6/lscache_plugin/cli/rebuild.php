@@ -140,6 +140,15 @@ try {
     // page - il faut le faire ici, sinon aucune classe d'extension n'est autochargeable et
     // les fournisseurs de services des plugins echouent sur « Class ... not found ».
     $app->createExtensionNamespaceMap();
+
+    // Meme raison : initialiseApp() construit l'objet langue et l'enregistre aupres de
+    // Factory (CMSApplication::initialiseApp). Sans lui getLanguage() rend null, et le
+    // premier appel a ->getTag() est fatal - c'est aussi ce qui faisait echouer le
+    // fournisseur de services de com_contactenhanced au routage.
+    $lang = $container->get(\Joomla\CMS\Language\LanguageFactoryInterface::class)
+        ->createLanguage($app->get('language', 'en-GB'), (bool) $app->get('debug_lang', false));
+    $app->loadLanguage($lang);
+    Factory::$language = $app->getLanguage();
 } catch (\Throwable $e) {
     lsc_out('Amorcage de Joomla impossible : ' . $e->getMessage(), true);
     lsc_out('  ' . get_class($e) . ' dans ' . basename($e->getFile()) . ':' . $e->getLine(), true);

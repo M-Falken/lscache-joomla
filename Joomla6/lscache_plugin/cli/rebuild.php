@@ -149,6 +149,11 @@ try {
         ->createLanguage($app->get('language', 'en-GB'), (bool) $app->get('debug_lang', false));
     $app->loadLanguage($lang);
     Factory::$language = $app->getLanguage();
+
+    // Les chaines du plugin et du composant vivent dans les fichiers de langue admin.
+    // Sans ce chargement, les messages sortent en cle brute (COM_LSCACHE_ERR_...).
+    $lang->load('com_lscache', JPATH_ADMINISTRATOR);
+    $lang->load('plg_system_lscache', JPATH_ADMINISTRATOR);
 } catch (\Throwable $e) {
     lsc_out('Amorcage de Joomla impossible : ' . $e->getMessage(), true);
     lsc_out('  ' . get_class($e) . ' dans ' . basename($e->getFile()) . ':' . $e->getLine(), true);

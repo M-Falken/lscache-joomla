@@ -2222,7 +2222,22 @@ class plgSystemLSCache extends CMSPlugin {
         }
 
         // enforceDuration=false : comme le rebuild manuel, un run CLI va jusqu'au bout.
-        $this->crawlUrls($crawlList, false, true, false, true);
+        // Un plantage doit laisser un etat terminal : sinon le fichier reste sur « running »
+        // et le verrou anti-cumul bloque les relances jusqu'au seuil d'inactivite.
+        try {
+            $this->crawlUrls($crawlList, false, true, false, true);
+        } catch (\Throwable $e) {
+            file_put_contents($this->getProgressFile(), json_encode(array(
+                'status'  => 'error',
+                'total'   => count($crawlList),
+                'current' => 0,
+                'success' => 0,
+                'error'   => $e->getMessage() . ' [' . basename($e->getFile()) . ':' . $e->getLine() . ']',
+                'started' => time(),
+                'updated' => time(),
+            )));
+            throw $e;
+        }
 
         $json = @json_decode(@file_get_contents($this->getProgressFile()), true);
         return is_array($json) ? $json : array('status' => 'completed', 'total' => count($crawlList));

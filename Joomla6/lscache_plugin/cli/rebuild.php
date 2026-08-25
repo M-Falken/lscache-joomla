@@ -60,6 +60,17 @@ function lsc_out($message, $isError = false)
     }
 }
 
+// Survivre a la fermeture du terminal. Fermer une fenetre SSH envoie SIGHUP au processus
+// au premier plan, ce qui tue une reconstruction en cours - le cas s'est produit a
+// 2680/4652. Lance par cron il n'y a pas de terminal de controle et le signal n'arrive
+// jamais, mais un lancement manuel doit pouvoir survivre a la deconnexion.
+if (function_exists('pcntl_signal') && defined('SIGHUP')) {
+    if (function_exists('pcntl_async_signals')) {
+        pcntl_async_signals(true);
+    }
+    pcntl_signal(SIGHUP, SIG_IGN);
+}
+
 define('_JEXEC', 1);
 define('JPATH_BASE', dirname(__DIR__, 4));
 
@@ -162,6 +173,10 @@ try {
 
 lsc_out('Site       : ' . $siteUrl);
 lsc_out('Demarrage  : ' . date('Y-m-d H:i:s'));
+if (!$dryRun && $limit === 0 && !function_exists('pcntl_signal')) {
+    lsc_out('Note       : pcntl absent, ce processus ne survivra pas a la fermeture du');
+    lsc_out('             terminal. Lancez-le avec nohup ... & ou sous screen/tmux.');
+}
 
 try {
     // plg_behaviour_compat charge les alias de classes historiques (JFactory, JPlugin...)

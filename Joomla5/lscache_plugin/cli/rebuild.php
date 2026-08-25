@@ -144,6 +144,12 @@ lsc_out('Site       : ' . $siteUrl);
 lsc_out('Demarrage  : ' . date('Y-m-d H:i:s'));
 
 try {
+    // plg_behaviour_compat charge les alias de classes historiques (JFactory, JPlugin...)
+    // DANS SON CONSTRUCTEUR, justement pour qu'ils existent au plus tot. En requete web il
+    // est importe pendant le demarrage de l'application ; ici il faut le faire nous-memes,
+    // sinon le routeur de VirtueMart echoue sur « Class JFactory not found » et toutes ses
+    // URLs sont ecartees au routage.
+    PluginHelper::importPlugin('behaviour');
     PluginHelper::importPlugin('system', 'lscache');
     $results = $app->triggerEvent('onLSCacheRebuildCli', array($limit, $dryRun));
 } catch (\Throwable $e) {

@@ -2094,6 +2094,13 @@ class plgSystemLSCache extends CMSPlugin {
                 if (strpos($routed, '/component') === 0) {
                     $routed = '/' . $path;
                 }
+                // Quand sef_rewrite est actif, la regle du routeur qui retire « index.php/ »
+                // du chemin n'est pas toujours attachee hors requete web. Ce prefixe est alors
+                // de trop : la page est servie sur l'URL propre, et rechauffer /index.php/x ne
+                // met pas /x en cache. En requete web le routeur l'a deja retire, sans effet.
+                if ($this->app->get('sef_rewrite')) {
+                    $routed = preg_replace('#^(/?)index\.php/#', '$1', $routed);
+                }
                 if ((strpos($routed, '[') !== false) && (strpos($routed, ']') !== false)) {
                     $pos = strpos($routed, '?');
                     if ($pos === false) {

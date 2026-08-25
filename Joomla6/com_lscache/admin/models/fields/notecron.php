@@ -11,7 +11,9 @@
 
 defined('JPATH_BASE') or die;
 
+use Joomla\CMS\Factory;
 use Joomla\CMS\Form\Field\NoteField;
+use Joomla\CMS\Uri\Uri;
 use Joomla\CMS\Form\FormHelper;
 use Joomla\CMS\Language\Text;
 
@@ -57,11 +59,29 @@ class JFormFieldNoteCron extends NoteField
         return '/usr/bin/php';
     }
 
+    /**
+     * Option --url a ajouter, ou chaine vide.
+     *
+     * Sans requete HTTP, la ligne de commande n'a rien dont deduire le domaine. Le script
+     * se rabat sur $live_site, mais ce champ est souvent vide : on compose alors l'option
+     * ici plutot que de laisser l'admin decouvrir l'echec au premier passage du cron.
+     */
+    protected function getUrlOption()
+    {
+        $liveSite = trim((string) Factory::getApplication()->get('live_site', ''));
+        if ($liveSite !== '') {
+            return '';
+        }
+
+        return ' --url=' . rtrim(Uri::root(), '/');
+    }
+
     protected function getLabel()
     {
         $description = Text::_((string) $this->element['description']);
         $description = str_replace('{clipath}', $this->getCliPath(), $description);
         $description = str_replace('{phpbin}', $this->getPhpBinary(), $description);
+        $description = str_replace('{urlopt}', $this->getUrlOption(), $description);
 
         $this->element['description'] = $description;
 

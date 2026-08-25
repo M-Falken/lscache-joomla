@@ -155,9 +155,11 @@ class plgSystemLSCache extends CMSPlugin {
                 $this->cacheTags[] = "com_menus:" . $menuid;
             }
             $this->pageElements = $this->menuItem->query;
-            if (empty($this->pageElements["option"]) && (!empty($app->input->get('option')))) {
+            if (!empty($app->input->get('option'))) {
                 $this->pageElements["option"] = $app->input->get('option');
-            }
+				$this->pageElements["view"] = $app->input->get('view');
+				$this->pageElements["id"] = $app->input->get('id');
+            }            
         } else {
             $link = Uri::getInstance()->getQuery();
             if (!empty($link)) {
@@ -809,7 +811,7 @@ class plgSystemLSCache extends CMSPlugin {
             return;
         }
 
-        if($row->featured){
+        if(isset($row->featured) && $row->featured){
             $purgeTags .= ','. $option . ':featured';
         }
 

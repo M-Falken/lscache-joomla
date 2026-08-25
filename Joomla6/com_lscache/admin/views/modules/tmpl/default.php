@@ -270,6 +270,9 @@ var _lscRebuild = {
     starting:      <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_STARTING')); ?>,
     titleComplete: <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_TITLE_COMPLETE')); ?>,
     titleError:    <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_TITLE_ERROR')); ?>,
+    titleStalled:  <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_TITLE_STALLED')); ?>,
+    stalledAt:     <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_STALLED_AT')); ?>,
+    stalledHint:   <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_STALLED_HINT')); ?>,
     cached:        <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_CACHED')); ?>,
     completeMsg:   <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_COMPLETE_MSG')); ?>,
     pagesCached:   <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_PAGES_CACHED')); ?>,
@@ -370,6 +373,21 @@ var _lscRebuild = {
                     alertEl.className = 'alert alert-danger';
                     title.textContent = _lscRebuild.titleError;
                     text.textContent = data.error || 'Unknown error';
+                    dismissBtn.style.display = 'inline-block';
+                    clearInterval(timer);
+                } else if (data.status === 'stalled') {
+                    // Le plugin marque ainsi un crawl détaché mort sans avoir pu écrire
+                    // son état final. On fige la barre sur la dernière valeur connue au
+                    // lieu de la laisser tourner indéfiniment.
+                    var sTotal   = data.total   || 0;
+                    var sCurrent = data.current || 0;
+                    var sPct     = sTotal ? Math.round(sCurrent / sTotal * 100) : 0;
+                    bar.classList.remove('progress-bar-animated');
+                    bar.style.background = '#f0ad4e';
+                    alertEl.className = 'alert alert-warning';
+                    title.textContent = _lscRebuild.titleStalled;
+                    setProgress(sPct, _lscRebuild.stalledAt + ' ' + sCurrent + ' / ' + sTotal
+                        + ' ' + _lscRebuild.pagesCached + '. ' + _lscRebuild.stalledHint);
                     dismissBtn.style.display = 'inline-block';
                     clearInterval(timer);
                 }

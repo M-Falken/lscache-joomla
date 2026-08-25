@@ -36,6 +36,10 @@ class plgSystemLSCache extends CMSPlugin {
     const MODULE_PURGEALL = 2;
     const MODULE_PURGETAG = 3;
     const MODULE_EMBED = 4;
+    // Un crawl annoncé 'starting'/'running' qui n'a plus écrit depuis ce délai est
+    // considéré mort. Marge large : avec le flush temporisé de crawlUrls() et le
+    // timeout curl de 30 s, l'écart normal entre deux écritures ne dépasse pas ~60 s.
+    const REBUILD_STALE_SECONDS = 180;
     const CATEGORY_CONTEXTS = array('com_categories.category', 'com_banners.category', 'com_contact.category', 'com_content.category', 'com_newsfeeds.category', 'com_users.category',
         'com_categories.categories', 'com_banners.categories', 'com_contact.categories', 'com_content.categories', 'com_newsfeeds.categories', 'com_users.categories');
     const CONTENT_CONTEXTS = array('com_content.article', 'com_content.featured', 'com_content.form', 'com_banner.banner', 'com_contact.contact', 'com_newsfeeds.newsfeed', 'com_content');
@@ -1879,16 +1883,21 @@ class plgSystemLSCache extends CMSPlugin {
         if (!is_array($json)) {
             return ['status' => 'idle'];
         }
-        // Un crawl encore actif ('starting'/'running') est considéré orphelin s'il n'a pas écrit
-        // depuis 1h (process mort). Un état terminal (completed/error) reste affiché indéfiniment
-        // jusqu'à ce que l'admin le consulte (dismiss) ou qu'un nouveau rebuild écrase le fichier —
-        // un rebuild peut durer plusieurs heures et personne ne regarde l'écran au moment précis
-        // où il se termine.
-        $terminal = in_array($json['status'] ?? '', ['completed', 'error'], true);
+        // Un état terminal (completed/error) reste affiché indéfiniment jusqu'à ce que
+        // l'admin le consulte (dismiss) ou qu'un nouveau rebuild écrase le fichier : un
+        // rebuild peut durer plusieurs heures et personne ne regarde l'écran au moment
+        // précis où il se termine.
+        //
+        // Un crawl encore annoncé actif mais qui n'écrit plus est un processus mort : il
+        // tourne détaché après litespeed_finish_request() et peut être tué à tout moment
+        // par le watchdog LSAPI/PHP-FPM, sans jamais pouvoir écrire son état final. On le
+        // signale ('stalled') au lieu de laisser la barre tourner dans le vide.
         $lastUpdate = $json['updated'] ?? ($json['started'] ?? null);
-        if (!$terminal && $lastUpdate !== null && (time() - $lastUpdate) > 3600) {
-            @unlink($progressFile);
-            return ['status' => 'idle'];
+        if ((!in_array($json['status'] ?? '', ['completed', 'error'], true))
+            && ($lastUpdate !== null)
+            && ((time() - $lastUpdate) > self::REBUILD_STALE_SECONDS)) {
+            $json['status']  = 'stalled';
+            $json['stalled'] = time() - $lastUpdate;
         }
         return $json;
     }

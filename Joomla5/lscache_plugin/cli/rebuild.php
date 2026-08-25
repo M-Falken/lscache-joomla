@@ -119,10 +119,24 @@ use Joomla\CMS\Factory;
 use Joomla\CMS\Plugin\PluginHelper;
 
 try {
-    $app = Factory::getContainer()->get(SiteApplication::class);
+    $container = Factory::getContainer();
+
+    // includes/app.php enregistre ces alias avant d'instancier l'application : sans eux le
+    // conteneur ne sait pas resoudre SessionInterface, dont SiteApplication a besoin, et
+    // l'amorcage echoue. On pointe sur « session.cli » et non « session.web.site » : ce
+    // service utilise RuntimeStorage, en memoire, sans cookie ni en-tete - ce qu'une
+    // session web tenterait d'emettre au beau milieu d'un script en ligne de commande.
+    $container->alias('session', 'session.cli')
+        ->alias('JSession', 'session.cli')
+        ->alias(\Joomla\CMS\Session\Session::class, 'session.cli')
+        ->alias(\Joomla\Session\Session::class, 'session.cli')
+        ->alias(\Joomla\Session\SessionInterface::class, 'session.cli');
+
+    $app = $container->get(SiteApplication::class);
     Factory::$application = $app;
 } catch (\Throwable $e) {
     lsc_out('Amorcage de Joomla impossible : ' . $e->getMessage(), true);
+    lsc_out('  ' . get_class($e) . ' dans ' . basename($e->getFile()) . ':' . $e->getLine(), true);
     exit(1);
 }
 
@@ -134,6 +148,7 @@ try {
     $results = $app->triggerEvent('onLSCacheRebuildCli', array($limit, $dryRun));
 } catch (\Throwable $e) {
     lsc_out('Echec de la reconstruction : ' . $e->getMessage(), true);
+    lsc_out('  ' . get_class($e) . ' dans ' . basename($e->getFile()) . ':' . $e->getLine(), true);
     exit(1);
 }
 

@@ -206,6 +206,11 @@ if ($result === null) {
     exit(1);
 }
 
+if (isset($result['concurrency'])) {
+    lsc_out('Reglages   : ' . (int) $result['concurrency'] . ' page(s) en parallele, pause '
+          . (int) $result['delay'] . ' ms entre lancements');
+}
+
 switch ($result['status']) {
     case 'dry-run':
         lsc_out('Simulation : ' . (int) $result['total'] . ' URL(s) seraient crawlees.');

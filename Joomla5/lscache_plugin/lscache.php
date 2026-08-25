@@ -2240,7 +2240,14 @@ class plgSystemLSCache extends CMSPlugin {
         }
 
         $json = @json_decode(@file_get_contents($this->getProgressFile()), true);
-        return is_array($json) ? $json : array('status' => 'completed', 'total' => count($crawlList));
+        $json = is_array($json) ? $json : array('status' => 'completed', 'total' => count($crawlList));
+
+        // Remonter les reglages reellement lus : sans cela, impossible de savoir depuis la
+        // ligne de commande si un changement dans l'admin a bien ete pris en compte.
+        $json['concurrency'] = (int) $this->settings->get('crawlConcurrency', 5);
+        $json['delay']       = (int) $this->settings->get('crawlDelay', 0);
+
+        return $json;
     }
 
     public function onLSCacheRebuildAll() {

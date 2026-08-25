@@ -467,7 +467,9 @@ class plgSystemLSCache extends CMSPlugin {
             $this->purgeObject->recacheAll = false;
             ignore_user_abort(true);
             set_time_limit(0); // unlimited: URL pre-collection may take time on large sites
-            $progressFile = JPATH_ROOT . '/cache/lscache_rebuild_progress.json';
+            $progressFile = $this->getProgressFile();
+            // Résidu de l'ancien emplacement (<= 1.5.4) : plus aucun lecteur, on le nettoie.
+            @unlink(JPATH_ROOT . '/cache/lscache_rebuild_progress.json');
 
             // Collect URLs NOW while Joomla is fully initialised (getSiteMap + Route::link need
             // the router AND the session). We pre-route every URL here so the shutdown handler
@@ -535,7 +537,7 @@ class plgSystemLSCache extends CMSPlugin {
                     try {
                         // enforceDuration=false: le rebuild manuel doit tourner jusqu'au bout,
                         // contrairement au recache automatique synchrone après purge (recacheAction).
-                        $this->crawlUrls($crawlList, false, true, false);
+                        $this->crawlUrls($crawlList, false, true, false, true);
                     } catch (\Throwable $e) {
                         file_put_contents($pfClosure, json_encode([
                             'status'  => 'error',
@@ -1845,11 +1847,26 @@ class plgSystemLSCache extends CMSPlugin {
         return true;
     }
 
+    /**
+     * Emplacement du fichier de suivi du rebuild manuel.
+     *
+     * Volontairement dans le tmp_path configuré de Joomla et non dans /cache : le dossier
+     * cache est vidé régulièrement (com_cache, tâches planifiées, scripts de maintenance)
+     * et emportait l'état du rebuild en cours avec lui.
+     */
+    private function getProgressFile() {
+        $tmp = (string) $this->app->get('tmp_path');
+        if (($tmp === '') || (!is_dir($tmp)) || (!is_writable($tmp))) {
+            $tmp = JPATH_ROOT . '/tmp';
+        }
+        return rtrim($tmp, '/\\') . '/lscache_rebuild_progress.json';
+    }
+
     public function onAjaxLscache() {
         if (!$this->isAdmin()) {
             return ['status' => 'idle'];
         }
-        $progressFile = JPATH_ROOT . '/cache/lscache_rebuild_progress.json';
+        $progressFile = $this->getProgressFile();
 
         if ($this->app->getInput()->getInt('dismiss', 0) === 1) {
             @unlink($progressFile);
@@ -1918,7 +1935,7 @@ class plgSystemLSCache extends CMSPlugin {
         return $curlMenus;
     }
 
-    private function crawlUrls($urls, $output = true, $preRouted = false, $enforceDuration = true) {
+    private function crawlUrls($urls, $output = true, $preRouted = false, $enforceDuration = true, $trackProgress = false) {
         $prevTimeLimit = (int) ini_get('max_execution_time');
         set_time_limit(0);
 
@@ -1942,16 +1959,22 @@ class plgSystemLSCache extends CMSPlugin {
         $recacheDuration = $this->settings->get('recacheDuration', 30) * 1000000;
         $break = false;
         $breakReason     = null;
-        $progressFile    = JPATH_ROOT . '/cache/lscache_rebuild_progress.json';
+        // Seul le rebuild manuel alimente le fichier de suivi. Le recache automatique
+        // déclenché par une purge passe par la même méthode : sans ce garde-fou il
+        // écrasait la progression du rebuild en cours et remettait la barre à zéro.
+        $progressFile    = $trackProgress ? $this->getProgressFile() : null;
         $progressStarted = time();
-        file_put_contents($progressFile, json_encode([
-            'status'  => 'running',
-            'total'   => $count,
-            'current' => 0,
-            'success' => 0,
-            'started' => $progressStarted,
-            'updated' => $progressStarted,
-        ]));
+        $lastFlush       = $progressStarted;
+        if ($trackProgress) {
+            file_put_contents($progressFile, json_encode([
+                'status'  => 'running',
+                'total'   => $count,
+                'current' => 0,
+                'success' => 0,
+                'started' => $progressStarted,
+                'updated' => $progressStarted,
+            ]));
+        }
         if ($output) {
             //ob_implicit_flush(TRUE);
             echo '<h3>Rebuild LiteSpeed Cache may take several minutes</h3><br/>';
@@ -2027,14 +2050,17 @@ class plgSystemLSCache extends CMSPlugin {
             }
             $current++;
 
-            if ($current % 5 === 0 || $current === $count) {
+            // Tous les 5 URLs OU toutes les 3 secondes : sur un site lent les 5 premières
+            // pages peuvent prendre une minute, la barre restait affichée à 0 tout ce temps.
+            if ($trackProgress && (($current % 5 === 0) || ($current === $count) || ((time() - $lastFlush) >= 3))) {
+                $lastFlush = time();
                 file_put_contents($progressFile, json_encode([
                     'status'  => 'running',
                     'total'   => $count,
                     'current' => $current,
                     'success' => $success,
                     'started' => $progressStarted,
-                    'updated' => time(),
+                    'updated' => $lastFlush,
                 ]));
             }
 
@@ -2071,16 +2097,18 @@ class plgSystemLSCache extends CMSPlugin {
             flush();
         }
 
-        file_put_contents($progressFile, json_encode([
-            'status'   => $break ? 'error' : 'completed',
-            'total'    => $count,
-            'current'  => $current,
-            'success'  => $success,
-            'started'  => $progressStarted,
-            'updated'  => time(),
-            'finished' => time(),
-            'error'    => $breakReason,
-        ]));
+        if ($trackProgress) {
+            file_put_contents($progressFile, json_encode([
+                'status'   => $break ? 'error' : 'completed',
+                'total'    => $count,
+                'current'  => $current,
+                'success'  => $success,
+                'started'  => $progressStarted,
+                'updated'  => time(),
+                'finished' => time(),
+                'error'    => $breakReason,
+            ]));
+        }
         $totalTime = round($this->microtimeMinus($begin, microtime()) / 1000000);
         if ($count == $current) {
             $msg = str_replace('%d', $totalTime, Text::_('COM_LSCACHE_PLUGIN_PAGERECACHED'));

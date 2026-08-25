@@ -82,6 +82,7 @@ class JFormFieldNoteCron extends NoteField
         $description = str_replace('{clipath}', $this->getCliPath(), $description);
         $description = str_replace('{phpbin}', $this->getPhpBinary(), $description);
         $description = str_replace('{urlopt}', $this->getUrlOption(), $description);
+        $description = str_replace('{phpver}', PHP_VERSION, $description);
 
         $this->element['description'] = $description;
 

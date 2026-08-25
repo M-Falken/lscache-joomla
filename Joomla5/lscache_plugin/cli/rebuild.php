@@ -134,6 +134,12 @@ try {
 
     $app = $container->get(SiteApplication::class);
     Factory::$application = $app;
+
+    // SiteApplication::execute() enregistre la carte PSR-4 des extensions juste apres son
+    // controle des variables systeme. Comme on n'appelle jamais execute() - il rendrait une
+    // page - il faut le faire ici, sinon aucune classe d'extension n'est autochargeable et
+    // les fournisseurs de services des plugins echouent sur « Class ... not found ».
+    $app->createExtensionNamespaceMap();
 } catch (\Throwable $e) {
     lsc_out('Amorcage de Joomla impossible : ' . $e->getMessage(), true);
     lsc_out('  ' . get_class($e) . ' dans ' . basename($e->getFile()) . ':' . $e->getLine(), true);

@@ -44,19 +44,34 @@ class JFormFieldNoteCron extends NoteField
      */
     protected function getPhpBinary()
     {
-        $candidates = array(
-            PHP_BINDIR . '/php',
-            '/usr/local/bin/php',
-            '/usr/bin/php',
-        );
+        // Chemin generique en premier. C'est un exemple destine a etre adapte, et sur les
+        // hebergements qui l'exposent - CloudLinux notamment - il suit la version PHP
+        // choisie pour le compte, donc il survit a une migration de version, contrairement
+        // a un chemin fige comme /opt/alt/php84/... Le binaire precis est donne dans le
+        // texte a titre indicatif.
+        if (@is_file('/usr/bin/php')) {
+            return '/usr/bin/php';
+        }
 
-        foreach ($candidates as $candidate) {
+        foreach (array(PHP_BINDIR . '/php', '/usr/local/bin/php') as $candidate) {
             if (@is_file($candidate)) {
                 return $candidate;
             }
         }
 
         return '/usr/bin/php';
+    }
+
+    /**
+     * Binaire PHP qui sert reellement les pages.
+     *
+     * PHP_BINDIR est le repertoire du SAPI web, pas celui de la ligne de commande : les
+     * deux coincident souvent mais rien ne le garantit. On l'affiche comme indication,
+     * pas comme valeur a copier aveuglement.
+     */
+    protected function getDetectedPhpBinary()
+    {
+        return PHP_BINDIR . '/php';
     }
 
     /**
@@ -83,6 +98,7 @@ class JFormFieldNoteCron extends NoteField
         $description = str_replace('{phpbin}', $this->getPhpBinary(), $description);
         $description = str_replace('{urlopt}', $this->getUrlOption(), $description);
         $description = str_replace('{phpver}', PHP_VERSION, $description);
+        $description = str_replace('{phpdetected}', $this->getDetectedPhpBinary(), $description);
 
         $this->element['description'] = $description;
 

@@ -19,7 +19,9 @@
  *                             vide dans configuration.php : en CLI il n'y a pas de
  *                             requête HTTP, donc rien dont Joomla puisse déduire le
  *                             domaine pour construire les URLs à crawler.
- *   --dry-run                 Collecte et affiche les URLs sans rien crawler.
+ *   --dry-run                 Collecte et affiche les 20 premieres URLs, sans rien crawler.
+ *   --list                    Comme --dry-run mais affiche la liste complete, une URL par
+ *                             ligne, sans en-tetes : de quoi la filtrer avec grep.
  *   --limit=N                 Ne traite que les N premières URLs (test de fumée).
  *   --quiet                   N'affiche que les erreurs. À utiliser en cron.
  *   --help                    Affiche cette aide.
@@ -38,7 +40,7 @@ if (PHP_SAPI !== 'cli') {
     exit('This script must be run from the command line.');
 }
 
-$options = getopt('', array('url::', 'dry-run', 'limit::', 'quiet', 'help'));
+$options = getopt('', array('url::', 'dry-run', 'list', 'limit::', 'quiet', 'help'));
 
 if (isset($options['help'])) {
     $doc = file_get_contents(__FILE__);
@@ -47,7 +49,11 @@ if (isset($options['help'])) {
 }
 
 $quiet  = isset($options['quiet']);
-$dryRun = isset($options['dry-run']);
+$listOnly = isset($options['list']);
+$dryRun   = isset($options['dry-run']) || $listOnly;
+if ($listOnly) {
+    $quiet = true;   // la liste seule, exploitable par grep
+}
 $limit  = isset($options['limit']) ? (int) $options['limit'] : 0;
 
 function lsc_out($message, $isError = false)
@@ -213,6 +219,12 @@ if (isset($result['concurrency'])) {
 
 switch ($result['status']) {
     case 'dry-run':
+        if ($listOnly) {
+            foreach ($result['urls'] as $url) {
+                fwrite(STDOUT, $siteUrl . $url . PHP_EOL);
+            }
+            exit(empty($result['urls']) ? 1 : 0);
+        }
         lsc_out('Simulation : ' . (int) $result['total'] . ' URL(s) seraient crawlees.');
         lsc_out('  elements de menu : ' . (int) $result['menuCount']);
         lsc_out('  URLs composants  : ' . (int) $result['compCount']);

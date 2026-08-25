@@ -1992,6 +1992,11 @@ class plgSystemLSCache extends CMSPlugin {
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
             curl_setopt($ch, CURLOPT_MAXREDIRS, 1);
+            // Sans timeout explicite curl attend indéfiniment : une seule page front qui
+            // pend bloquait tout le crawl, progression figée et aucun état d'erreur écrit.
+            // Une page qui met plus de 30 s à se rendre n'a pas sa place en pré-chauffage.
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
             // Browser-like UA keeps WAFs and security plugins happy while the
             // "lscache_runner" suffix stays identifiable in server logs.
             curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (compatible; lscache_runner)');

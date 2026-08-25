@@ -2052,9 +2052,15 @@ class plgSystemLSCache extends CMSPlugin {
             $rawList = array_column($menus, 'path');
 
             // Joomla5 a reçu de l'amont un champ « recacheComponents » multiple, alors que le
-            // code lit historiquement « recacheComponent » au singulier : sans ce repli le
-            // réglage reste sans effet. On accepte les deux, valeur simple comme tableau.
-            $components = $this->settings->get('recacheComponents', $this->settings->get('recacheComponent', false));
+            // code lit historiquement « recacheComponent » au singulier. Sans repli le réglage
+            // reste sans effet, et le formulaire affiche « Please Select » puisque la valeur
+            // enregistrée vit sous l'ancienne clé : un simple enregistrement de la config
+            // suffirait alors à retirer silencieusement les URLs du composant du crawl.
+            // On teste donc le vide, pas seulement l'absence de clé.
+            $components = $this->settings->get('recacheComponents', null);
+            if (empty($components)) {
+                $components = $this->settings->get('recacheComponent', false);
+            }
             foreach ((array) $components as $component) {
                 if (empty($component)) {
                     continue;

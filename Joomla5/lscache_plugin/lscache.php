@@ -35,6 +35,9 @@ class plgSystemLSCache extends CMSPlugin {
     const MODULE_PURGEALL = 2;
     const MODULE_PURGETAG = 3;
     const MODULE_EMBED = 4;
+    // A 'starting'/'running' crawl that stopped writing past this many seconds
+    // is considered dead.
+    const REBUILD_STALE_SECONDS = 180;
     const CATEGORY_CONTEXTS = array('com_categories.category', 'com_banners.category', 'com_contact.category', 'com_content.category', 'com_newsfeeds.category', 'com_users.category',
         'com_categories.categories', 'com_banners.categories', 'com_contact.categories', 'com_content.categories', 'com_newsfeeds.categories', 'com_users.categories');
     const CONTENT_CONTEXTS = array('com_content.article', 'com_content.featured', 'com_content.form', 'com_banner.banner', 'com_contact.contact', 'com_contact.form', 'com_newsfeeds.newsfeed', 'com_content');
@@ -394,19 +397,12 @@ class plgSystemLSCache extends CMSPlugin {
             $this->purgeObject->recacheAll = false;
             ignore_user_abort(true);
             set_time_limit(0);
-            $progressFile = JPATH_ROOT . '/cache/lscache_rebuild_progress.json';
+            $progressFile = $this->getProgressFile();
+            // Leftover from the old /cache location: no reader left, clean it up.
+            @unlink(JPATH_ROOT . '/cache/lscache_rebuild_progress.json');
 
-            // Collect URLs NOW while Joomla is fully initialised (getSiteMap needs the router)
-            try {
-                $menus     = $this->getSiteMap();
-                $crawlList = array_map(function ($m) { return $m->path; }, $menus);
-                foreach ($this->getRecacheComponents() as $recacheComponent) {
-                    $compUrls  = $this->componentHelper->getComMap($recacheComponent);
-                    $crawlList = array_merge($compUrls, $crawlList);
-                }
-            } catch (\Throwable $e) {
-                $crawlList = [];
-            }
+            $collected = $this->collectCrawlUrls();
+            $crawlList = $collected['urls'];
 
             file_put_contents($progressFile, json_encode([
                 'status'  => empty($crawlList) ? 'error' : 'starting',
@@ -414,7 +410,8 @@ class plgSystemLSCache extends CMSPlugin {
                 'current' => 0,
                 'success' => 0,
                 'started' => time(),
-                'error'   => empty($crawlList) ? 'No URLs found. Enable "Recache" in LSCache settings.' : null,
+                'updated' => time(),
+                'error'   => $collected['error'],
             ]));
 
             if (!empty($crawlList)) {
@@ -422,13 +419,19 @@ class plgSystemLSCache extends CMSPlugin {
                 register_shutdown_function(\Closure::bind(function () use ($pfClosure, $crawlList) {
                     if (function_exists('fastcgi_finish_request')) {
                         fastcgi_finish_request();
+                    } elseif (function_exists('litespeed_finish_request')) {
+                        litespeed_finish_request();
                     }
                     try {
-                        $this->crawlUrls($crawlList, false);
+                        // enforceDuration=false: the manual rebuild must run to completion,
+                        // unlike the synchronous auto recache that follows a purge.
+                        $this->crawlUrls($crawlList, false, true, false, true);
                     } catch (\Throwable $e) {
                         file_put_contents($pfClosure, json_encode([
-                            'status' => 'error',
-                            'error'  => $e->getMessage() . ' in ' . basename($e->getFile()) . ':' . $e->getLine(),
+                            'status'  => 'error',
+                            'error'   => $e->getMessage() . ' in ' . basename($e->getFile()) . ':' . $e->getLine(),
+                            'started' => time(),
+                            'updated' => time(),
                         ]));
                     }
                 }, $this, \get_class($this)));
@@ -1786,7 +1789,16 @@ class plgSystemLSCache extends CMSPlugin {
     }
 
     public function onAjaxLscache() {
-        $progressFile = JPATH_ROOT . '/cache/lscache_rebuild_progress.json';
+        if (!$this->isAdmin()) {
+            return ['status' => 'idle'];
+        }
+        $progressFile = $this->getProgressFile();
+
+        if ($this->app->getInput()->getInt('dismiss', 0) === 1) {
+            @unlink($progressFile);
+            return ['status' => 'idle'];
+        }
+
         if (!file_exists($progressFile)) {
             return ['status' => 'idle'];
         }
@@ -1794,9 +1806,21 @@ class plgSystemLSCache extends CMSPlugin {
         if (!is_array($json)) {
             return ['status' => 'idle'];
         }
-        if (isset($json['started']) && (time() - $json['started']) > 3600) {
-            @unlink($progressFile);
-            return ['status' => 'idle'];
+
+        // A terminal state (completed/error) stays displayed until the admin dismisses
+        // it or a new rebuild overwrites the file: a rebuild can run for hours and
+        // nobody is watching the screen the moment it finishes.
+        //
+        // A crawl still claiming to be active but no longer writing is a dead process:
+        // it runs detached after litespeed_finish_request() and can be killed at any
+        // moment by the LSAPI/PHP-FPM watchdog, never getting a chance to write its
+        // final state. It is reported as 'stalled' instead of spinning forever.
+        $lastUpdate = $json['updated'] ?? ($json['started'] ?? null);
+        if ((!in_array($json['status'] ?? '', ['completed', 'error'], true))
+            && ($lastUpdate !== null)
+            && ((time() - $lastUpdate) > self::REBUILD_STALE_SECONDS)) {
+            $json['status']  = 'stalled';
+            $json['stalled'] = time() - $lastUpdate;
         }
         return $json;
     }
@@ -1840,6 +1864,225 @@ class plgSystemLSCache extends CMSPlugin {
         return array_filter((array) $components);
     }
 
+    /**
+     * Location of the manual rebuild's progress file.
+     *
+     * Deliberately Joomla's configured tmp_path rather than /cache: the cache
+     * directory is routinely emptied by com_cache, scheduled tasks and maintenance
+     * scripts, which took the state of a running rebuild with it.
+     */
+    private function getProgressFile() {
+        $tmp = (string) $this->app->get('tmp_path');
+        if (($tmp === '') || (!is_dir($tmp)) || (!is_writable($tmp))) {
+            $tmp = JPATH_ROOT . '/tmp';
+        }
+        return rtrim($tmp, '/\\') . '/lscache_rebuild_progress.json';
+    }
+
+    /**
+     * Collect and pre-route the URLs to warm.
+     *
+     * Pre-routing happens here, while Joomla is still fully initialised:
+     * getSiteMap() and Route::link() need both the router and the session, neither
+     * of which a shutdown handler or a CLI bootstrap can rely on later.
+     *
+     * @return  array  ['urls' => string[], 'error' => string|null]
+     */
+    private function collectCrawlUrls() {
+        try {
+            $menus     = $this->getSiteMap();
+            $crawlList = array_map(function ($m) { return $m->path; }, $menus);
+            foreach ($this->getRecacheComponents() as $recacheComponent) {
+                $compUrls  = $this->componentHelper->getComMap($recacheComponent);
+                $crawlList = array_merge($compUrls, $crawlList);
+            }
+        } catch (\Throwable $e) {
+            return array(
+                'urls'  => array(),
+                'error' => 'URL collection failed: ' . $e->getMessage(),
+            );
+        }
+
+        return array(
+            'urls'  => $crawlList,
+            'error' => empty($crawlList) ? 'No URLs found. Enable Recache in LSCache settings.' : null,
+        );
+    }
+
+    /**
+     * Is a rebuild already running? Returns its age in seconds if so, null otherwise.
+     *
+     * Without this guard a cron tick firing while a rebuild is still in progress
+     * would start a second crawl fighting the first one over the same progress file.
+     * A crawl that stopped writing past the stale threshold no longer counts as
+     * running, so it cannot block a relaunch indefinitely.
+     */
+    private function runningCrawlAge() {
+        $file = $this->getProgressFile();
+        if (!file_exists($file)) {
+            return null;
+        }
+
+        $json = @json_decode(@file_get_contents($file), true);
+        if ((!is_array($json)) || (!in_array($json['status'] ?? '', array('starting', 'running'), true))) {
+            return null;
+        }
+
+        $last = $json['updated'] ?? ($json['started'] ?? null);
+        if ($last === null) {
+            return null;
+        }
+
+        $age = time() - $last;
+        return ($age > self::REBUILD_STALE_SECONDS) ? null : $age;
+    }
+
+    /**
+     * Coverage of the crawl list actually sitting in the page cache, sampled at a
+     * regular stride so two runs are comparable. LiteSpeed exposes no API for this
+     * from PHP; the only signal available is the X-LiteSpeed-Cache header of a real
+     * response, one URL at a time. These probe requests deliberately skip
+     * newCrawlHandle(): they must warm nothing, or the measurement would change what
+     * it observes.
+     *
+     * @return  array
+     */
+    private function checkCacheCoverage($urls, $sample = 100) {
+        $count = count($urls);
+        if ($count < 1) {
+            return array('sampled' => 0, 'hit' => 0, 'miss' => 0, 'bands' => array());
+        }
+
+        $sample = max(1, min((int) $sample, $count));
+        $step   = $count / $sample;
+        $root   = Uri::getInstance()->toString(array('scheme', 'host', 'port'));
+
+        $bandCount = min(5, $sample);
+        $bands     = array_fill(0, $bandCount, array('hit' => 0, 'miss' => 0, 'from' => 0, 'to' => 0));
+        $hit = 0;
+        $miss = 0;
+
+        for ($i = 0; $i < $sample; $i++) {
+            $index = (int) floor($i * $step);
+            $url   = $urls[$index];
+            $curlurl = preg_match('#^https?://#i', $url) ? $url : $root . $url;
+
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL, $curlurl);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_HEADER, true);
+            curl_setopt($ch, CURLOPT_NOBODY, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
+            curl_setopt($ch, CURLOPT_MAXREDIRS, 1);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (compatible; lscache_probe)');
+            $response = curl_exec($ch);
+
+            $isHit = (is_string($response)
+                && preg_match('/^x-litespeed-cache:\\s*hit/mi', $response) === 1);
+
+            $band = min($bandCount - 1, (int) floor($i / max(1, $sample / $bandCount)));
+            if ($isHit) {
+                $hit++;
+                $bands[$band]['hit']++;
+            } else {
+                $miss++;
+                $bands[$band]['miss']++;
+            }
+            $bands[$band]['from'] = $bands[$band]['from'] ?: $index + 1;
+            $bands[$band]['to']   = $index + 1;
+        }
+
+        return array('sampled' => $sample, 'total' => $count, 'hit' => $hit, 'miss' => $miss, 'bands' => $bands);
+    }
+
+    /**
+     * Command line entry point for the crawl - see cli/rebuild.php.
+     *
+     * The admin button's rebuild runs detached after litespeed_finish_request(),
+     * unprotected against the LSAPI watchdog or a PHP-FPM request time limit. On the
+     * command line neither exists, which makes it the reliable path once a full
+     * rebuild takes more than a couple of minutes.
+     *
+     * Writes to the same progress file the admin button uses, so the panel's card
+     * follows a cron driven rebuild with no change on its side.
+     */
+    public function onLSCacheRebuildCli($limit = 0, $dryRun = false, $check = 0, $cookieHeader = '') {
+        if (PHP_SAPI !== 'cli') {
+            return array('status' => 'error', 'error' => 'onLSCacheRebuildCli is CLI only');
+        }
+
+        if (!$this->cacheEnabled) {
+            return array('status' => 'error', 'error' => Text::_('COM_LSCACHE_PLUGIN_TURNONFIRST'));
+        }
+
+        if (!function_exists('curl_version')) {
+            return array('status' => 'error', 'error' => Text::_('COM_LSCACHE_PLUGIN_CURLNOTSUPPORT'));
+        }
+
+        $age = $this->runningCrawlAge();
+        if ($age !== null) {
+            return array('status' => 'busy', 'error' => 'A rebuild is already running (last activity ' . (int) $age . ' s ago).');
+        }
+
+        $collected = $this->collectCrawlUrls();
+        $crawlList = $collected['urls'];
+
+        $limit = (int) $limit;
+        if (($limit > 0) && (count($crawlList) > $limit)) {
+            $crawlList = array_slice($crawlList, 0, $limit);
+        }
+
+        if ($check > 0) {
+            $stats = $this->checkCacheCoverage($crawlList, $check);
+            $stats['status'] = 'coverage';
+            return $stats;
+        }
+
+        if ($dryRun) {
+            return array(
+                'status' => 'dry-run',
+                'total'  => count($crawlList),
+                'urls'   => $crawlList,
+                'error'  => $collected['error'],
+            );
+        }
+
+        if (empty($crawlList)) {
+            return array('status' => 'error', 'total' => 0, 'error' => $collected['error']);
+        }
+
+        // enforceDuration=false: like the manual rebuild button, a CLI run goes all
+        // the way through regardless of recacheDuration. A crash must still leave a
+        // terminal state, or the progress file stays on 'running' and the busy guard
+        // blocks relaunching until the stale threshold.
+        try {
+            $this->crawlUrls($crawlList, false, true, false, true, $cookieHeader);
+        } catch (\Throwable $e) {
+            file_put_contents($this->getProgressFile(), json_encode(array(
+                'status'  => 'error',
+                'total'   => count($crawlList),
+                'current' => 0,
+                'success' => 0,
+                'error'   => $e->getMessage() . ' [' . basename($e->getFile()) . ':' . $e->getLine() . ']',
+                'started' => time(),
+                'updated' => time(),
+            )));
+            throw $e;
+        }
+
+        $json = @json_decode(@file_get_contents($this->getProgressFile()), true);
+        $json = is_array($json) ? $json : array('status' => 'completed', 'total' => count($crawlList));
+        $json['concurrency'] = (int) $this->settings->get('crawlConcurrency', 5);
+        $json['delay']       = (int) $this->settings->get('crawlDelay', 0);
+        $json['cookie']      = $cookieHeader;
+
+        return $json;
+    }
+
     private function getSiteMap($option = "") {
         $app  = Factory::getContainer()->get(SiteApplication::class);
         $appmenus = $app->getMenu();
@@ -1867,7 +2110,7 @@ class plgSystemLSCache extends CMSPlugin {
         return $curlMenus;
     }
 
-    private function crawlUrls($urls, $output = true) {
+    private function crawlUrls($urls, $output = true, $preRouted = false, $enforceDuration = true, $trackProgress = false, $cookieHeader = '') {
         $prevTimeLimit = (int) ini_get('max_execution_time');
         set_time_limit(0);
 
@@ -1912,15 +2155,24 @@ class plgSystemLSCache extends CMSPlugin {
         }
 
         $break = false;
-        $progressFile    = JPATH_ROOT . '/cache/lscache_rebuild_progress.json';
+        $breakReason     = null;
+        // Only a tracked crawl writes to the progress file. The synchronous auto recache
+        // that follows a purge goes through this same method; without this guard it
+        // overwrote the progress of a rebuild that was already running and reset the
+        // admin's progress bar back to zero.
+        $progressFile    = $trackProgress ? $this->getProgressFile() : null;
         $progressStarted = time();
-        file_put_contents($progressFile, json_encode([
-            'status'  => 'running',
-            'total'   => $count,
-            'current' => 0,
-            'success' => 0,
-            'started' => $progressStarted,
-        ]));
+        $lastFlush       = $progressStarted;
+        if ($trackProgress) {
+            file_put_contents($progressFile, json_encode([
+                'status'  => 'running',
+                'total'   => $count,
+                'current' => 0,
+                'success' => 0,
+                'started' => $progressStarted,
+                'updated' => $progressStarted,
+            ]));
+        }
         if ($output) {
             //ob_implicit_flush(TRUE);
             echo '<h3>Rebuild LiteSpeed Cache may take several minutes</h3><br/>';
@@ -1944,16 +2196,16 @@ class plgSystemLSCache extends CMSPlugin {
                 $url = $queue[$next];
                 $next++;
 
-                if ($this->isAdmin()) {
+                if ($preRouted) {
+                    $curlurl = $url;
+                } else {
                     try {
                         $curlurl = Route::link("site", $url);
-                    } catch (Error $ex) {
+                    } catch (\Throwable $ex) {
                         $this->log($ex->getMessage());
                         $current++;
                         continue;
                     }
-                } else {
-                    $curlurl = Route::link("site", $url);
                 }
 
                 if (strpos($curlurl, '/component') === 0) {
@@ -1989,6 +2241,14 @@ class plgSystemLSCache extends CMSPlugin {
                 // stalled the whole rebuild, progress frozen and no error state ever written.
                 curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
                 curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+                if ($cookieHeader !== '') {
+                    // Makes the crawl carry a real cookie (see --cookie in cli/rebuild.php),
+                    // useful for any extension whose output - and cache key - varies by cookie.
+                    // The origin computes state exactly as it would for a real visitor and
+                    // LiteSpeed stores the response under the resulting vary key, so the crawler
+                    // never needs to know or guess the cache's own vary cookie value.
+                    curl_setopt($ch, CURLOPT_COOKIE, $cookieHeader);
+                }
                 curl_setopt($ch, CURLOPT_USERAGENT, 'lscache_runner');
                 curl_setopt($ch, CURLOPT_ENCODING, "gzip");
                 curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
@@ -2027,8 +2287,8 @@ class plgSystemLSCache extends CMSPlugin {
                 if (in_array($httpcode, $acceptCode)) {
                     $success++;
                 } else if ($httpcode == 428) {
-                    echo 'Web Server crawler feature not enabled, please check <a href="https://www.litespeedtech.com/support/wiki/doku.php/litespeed_wiki:cache:lscwp:configuration:enabling_the_crawler" target="_blank">web server settings</a>';
                     $this->log('httpcode:' . $httpcode);
+                    $breakReason = 'LiteSpeed crawler feature not enabled - check web server settings (HTTP 428).';
                     $break = true;
                 } else {
                     $this->log('httpcode:' . $httpcode);
@@ -2050,15 +2310,23 @@ class plgSystemLSCache extends CMSPlugin {
                 flush();
             }
 
-            file_put_contents($progressFile, json_encode([
-                'status'  => 'running',
-                'total'   => $count,
-                'current' => $current,
-                'success' => $success,
-                'started' => $progressStarted,
-            ]));
+            // Every batch or every 3 seconds, whichever comes first: on a slow site the
+            // first few pages can take a while, during which the bar sat at 0 with nothing
+            // to show for it.
+            if ($trackProgress && ((($current >= $count) || $break) || ((time() - $lastFlush) >= 3))) {
+                $lastFlush = time();
+                file_put_contents($progressFile, json_encode([
+                    'status'  => 'running',
+                    'total'   => $count,
+                    'current' => $current,
+                    'success' => $success,
+                    'started' => $progressStarted,
+                    'updated' => $lastFlush,
+                ]));
+            }
 
-            if ((!$break) && (!$output) && ($this->microtimeMinus($begin, microtime()) > $recacheDuration)) {
+            if ((!$break) && $enforceDuration && ($this->microtimeMinus($begin, microtime()) > $recacheDuration)) {
+                $breakReason = 'Recache duration limit reached - ' . $current . '/' . $count . ' pages processed.';
                 $break = true;
             }
         }
@@ -2073,14 +2341,18 @@ class plgSystemLSCache extends CMSPlugin {
             flush();
         }
             
-        file_put_contents($progressFile, json_encode([
-            'status'   => 'completed',
-            'total'    => $count,
-            'current'  => $current,
-            'success'  => $success,
-            'started'  => $progressStarted,
-            'finished' => time(),
-        ]));
+        if ($trackProgress) {
+            file_put_contents($progressFile, json_encode([
+                'status'   => $break ? 'error' : 'completed',
+                'total'    => $count,
+                'current'  => $current,
+                'success'  => $success,
+                'started'  => $progressStarted,
+                'updated'  => time(),
+                'finished' => time(),
+                'error'    => $breakReason,
+            ]));
+        }
         $totalTime = round($this->microtimeMinus($begin, microtime()) / 1000000);
         if ($count == $current) {
             $msg = str_replace('%d', $totalTime, Text::_('COM_LSCACHE_PLUGIN_PAGERECACHED'));

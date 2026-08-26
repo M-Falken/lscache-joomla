@@ -15,6 +15,7 @@
 		<filename plugin="lscache">lscachebase.php</filename>
                 <folder plugin="lscache">components</folder>
                 <folder plugin="lscache">modules</folder>
+                <folder plugin="lscache">cli</folder>
                 
 	</files>
 </extension>

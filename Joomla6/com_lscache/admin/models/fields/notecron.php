@@ -11,6 +11,7 @@
 
 defined('JPATH_BASE') or die;
 
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Form\Field\NoteField;
 use Joomla\CMS\Uri\Uri;
@@ -91,6 +92,20 @@ class JFormFieldNoteCron extends NoteField
         return ' --url=' . rtrim(Uri::root(), '/');
     }
 
+    /**
+     * Premier nom de cookie configure pour distinguer un visiteur decide, ou la valeur
+     * par defaut si le reglage est vide - jamais une chaine vide, sinon l'exemple de
+     * commande --cookie=... serait invalide.
+     */
+    protected function getConsentCookieName()
+    {
+        $settings   = ComponentHelper::getParams('com_lscache');
+        $configured = (string) $settings->get('consentCookies', '');
+        $names      = array_filter(array_map('trim', explode(',', $configured)), 'strlen');
+
+        return $names ? reset($names) : 'cookieconsent_status';
+    }
+
     protected function getLabel()
     {
         $description = Text::_((string) $this->element['description']);
@@ -99,6 +114,7 @@ class JFormFieldNoteCron extends NoteField
         $description = str_replace('{urlopt}', $this->getUrlOption(), $description);
         $description = str_replace('{phpver}', PHP_VERSION, $description);
         $description = str_replace('{phpdetected}', $this->getDetectedPhpBinary(), $description);
+        $description = str_replace('{consentcookie}', $this->getConsentCookieName(), $description);
 
         $this->element['description'] = $description;
 

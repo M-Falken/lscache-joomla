@@ -31,7 +31,7 @@
  * @author    Grégory Roussel <siriusocteam@gmail.com>
  * @copyright 2026 Grégory Roussel. All rights reserved.
  * @license   http://www.gnu.org/licenses/gpl-2.0.html GNU/GPL
- * @version   1.5.22
+ * @version   1.5.23
  * @link      https://github.com/M-Falken
  */
 

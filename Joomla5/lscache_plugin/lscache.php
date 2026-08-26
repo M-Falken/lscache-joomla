@@ -2250,7 +2250,7 @@ class plgSystemLSCache extends CMSPlugin {
      * Écrit dans le même fichier de suivi que le bouton admin, donc la carte de
      * progression affiche un rebuild CLI sans rien avoir à changer.
      */
-    public function onLSCacheRebuildCli($limit = 0, $dryRun = false, $check = 0) {
+    public function onLSCacheRebuildCli($limit = 0, $dryRun = false, $check = 0, $cookieHeader = '') {
         if (PHP_SAPI !== 'cli') {
             return array('status' => 'error', 'error' => 'onLSCacheRebuildCli is CLI only');
         }
@@ -2307,7 +2307,7 @@ class plgSystemLSCache extends CMSPlugin {
         // Un plantage doit laisser un etat terminal : sinon le fichier reste sur « running »
         // et le verrou anti-cumul bloque les relances jusqu'au seuil d'inactivite.
         try {
-            $this->crawlUrls($crawlList, false, true, false, true);
+            $this->crawlUrls($crawlList, false, true, false, true, $cookieHeader);
         } catch (\Throwable $e) {
             file_put_contents($this->getProgressFile(), json_encode(array(
                 'status'  => 'error',
@@ -2328,6 +2328,7 @@ class plgSystemLSCache extends CMSPlugin {
         // ligne de commande si un changement dans l'admin a bien ete pris en compte.
         $json['concurrency'] = (int) $this->settings->get('crawlConcurrency', 5);
         $json['delay']       = (int) $this->settings->get('crawlDelay', 0);
+        $json['cookie']      = $cookieHeader;
 
         return $json;
     }
@@ -2412,9 +2413,16 @@ class plgSystemLSCache extends CMSPlugin {
     /**
      * Prépare un handle curl pour le pré-chauffage d'une page.
      */
-    private function newCrawlHandle($absoluteUrl, $root) {
+    private function newCrawlHandle($absoluteUrl, $root, $cookieHeader = '') {
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $absoluteUrl);
+        if ($cookieHeader !== '') {
+            // Fait porter au crawler le cookie de consentement d'une variante reelle
+            // (voir --cookie du CLI). Le serveur calcule alors la cle de variance comme
+            // pour un vrai visiteur, et LiteSpeed range la reponse sous cette cle - sans
+            // que le crawler ait besoin de connaitre ou deviner le cookie _lscache_vary.
+            curl_setopt($ch, CURLOPT_COOKIE, $cookieHeader);
+        }
         curl_setopt($ch, CURLOPT_HEADER, false);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
@@ -2467,7 +2475,7 @@ class plgSystemLSCache extends CMSPlugin {
         return (string) $this->app->get('language', 'en-GB');
     }
 
-    private function crawlUrls($urls, $output = true, $preRouted = false, $enforceDuration = true, $trackProgress = false) {
+    private function crawlUrls($urls, $output = true, $preRouted = false, $enforceDuration = true, $trackProgress = false, $cookieHeader = '') {
         $prevTimeLimit = (int) ini_get('max_execution_time');
         set_time_limit(0);
 
@@ -2562,7 +2570,7 @@ class plgSystemLSCache extends CMSPlugin {
                     usleep($crawlDelay * 1000);
                 }
 
-                $ch = $this->newCrawlHandle($this->absoluteCrawlUrl($root, $curlurl), $root);
+                $ch = $this->newCrawlHandle($this->absoluteCrawlUrl($root, $curlurl), $root, $cookieHeader);
                 curl_multi_add_handle($mh, $ch);
                 $inFlight[spl_object_id($ch)] = $curlurl;
             }

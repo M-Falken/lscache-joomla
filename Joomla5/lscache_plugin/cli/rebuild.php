@@ -22,6 +22,12 @@
  *   --dry-run                 Collecte et affiche les 20 premieres URLs, sans rien crawler.
  *   --list                    Comme --dry-run mais affiche la liste complete, une URL par
  *                             ligne, sans en-tetes : de quoi la filtrer avec grep.
+ *   --cookie=NOM=VALEUR       Fait porter ce cookie par le crawler (repetable). Sert a
+ *                             pre-chauffer le compartiment d'un visiteur ayant reellement
+ *                             tranche - le crawl par defaut est sans cookie et ne remplit
+ *                             que le compartiment « aucune decision », jamais celui d'un
+ *                             visiteur qui a accepte ou refuse le consentement. Exemple :
+ *                             --cookie=cookieconsent_status=allow
  *   --limit=N                 Ne traite que les N premières URLs (test de fumée).
  *   --quiet                   N'affiche que les erreurs. À utiliser en cron.
  *   --help                    Affiche cette aide.
@@ -40,7 +46,7 @@ if (PHP_SAPI !== 'cli') {
     exit('This script must be run from the command line.');
 }
 
-$options = getopt('', array('url::', 'dry-run', 'list', 'check::', 'limit::', 'quiet', 'help'));
+$options = getopt('', array('url::', 'dry-run', 'list', 'check::', 'limit::', 'cookie::', 'quiet', 'help'));
 
 if (isset($options['help'])) {
     $doc = file_get_contents(__FILE__);
@@ -58,6 +64,19 @@ $limit  = isset($options['limit']) ? (int) $options['limit'] : 0;
 $check  = array_key_exists('check', $options)
     ? (($options['check'] === false || $options['check'] === '') ? 100 : (int) $options['check'])
     : 0;
+
+// --cookie est repetable : getopt() rend alors un tableau, une seule occurrence rend une
+// chaine. On normalise, puis on ne garde que les paires NOM=VALEUR syntaxiquement valides -
+// une entree malformee ne doit pas faire echouer tout le run, juste etre ignoree.
+$cookiePairs = array();
+if (isset($options['cookie'])) {
+    foreach ((array) $options['cookie'] as $pair) {
+        if (strpos((string) $pair, '=') !== false) {
+            $cookiePairs[] = trim((string) $pair);
+        }
+    }
+}
+$cookieHeader = implode('; ', $cookiePairs);
 
 function lsc_out($message, $isError = false)
 {
@@ -195,7 +214,7 @@ try {
     // URLs sont ecartees au routage.
     PluginHelper::importPlugin('behaviour');
     PluginHelper::importPlugin('system', 'lscache');
-    $results = $app->triggerEvent('onLSCacheRebuildCli', array($limit, $dryRun, $check));
+    $results = $app->triggerEvent('onLSCacheRebuildCli', array($limit, $dryRun, $check, $cookieHeader));
 } catch (\Throwable $e) {
     lsc_out('Echec de la reconstruction : ' . $e->getMessage(), true);
     lsc_out('  ' . get_class($e) . ' dans ' . basename($e->getFile()) . ':' . $e->getLine(), true);
@@ -218,6 +237,9 @@ if ($result === null) {
 if (isset($result['concurrency'])) {
     lsc_out('Reglages   : ' . (int) $result['concurrency'] . ' page(s) en parallele, pause '
           . (int) $result['delay'] . ' ms entre lancements');
+}
+if (!empty($result['cookie'])) {
+    lsc_out('Variante   : ' . $result['cookie']);
 }
 
 if ($result['status'] === 'coverage') {

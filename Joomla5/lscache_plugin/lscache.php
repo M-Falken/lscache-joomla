@@ -1843,6 +1843,16 @@ class plgSystemLSCache extends CMSPlugin {
      *  who accepted and refused cookies alike.
      */
     private function getPageCacheVary() {
+        // Coupure explicite, pour un site qui a VERIFIE que sa sortie HTML ne depend pas
+        // de l'etat de consentement. Le vary fragmente alors le cache en copies identiques :
+        // chaque variante doit etre rechauffee separement alors qu'aucune ne differe. La
+        // condition est dans la description du reglage, et elle est serieuse - un gestionnaire
+        // de consentement qui se mettrait a filtrer le HTML cote serveur rendrait ce reglage
+        // dangereux du jour au lendemain.
+        if (!$this->settings->get('pagecacheVary', 1)) {
+            return '';
+        }
+
         if (!class_exists('Joomla\\CMS\\Event\\PageCache\\GetKeyEvent')) {
             return '';
         }

@@ -37,7 +37,7 @@
     </fieldset>
     
     <fieldset name="exclude"  addfieldpath="/administrator/components/com_lscache/models/fields"  label="COM_LSCACHE_FIELDSET_EXCLUDE_LABEL" description="COM_LSCACHE_FIELDSET_EXCLUDE_DESC" >
-        <field name="excludeOptions" type="components" required="false" multiple="multiple" label="COM_LSCACHE_FIELD_EXCLUDE_COMPONENT_LABEL"/>
+        <field name="excludeOptions" type="components" required="false" multiple="multiple" layout="joomla.form.field.list-fancy-select" label="COM_LSCACHE_FIELD_EXCLUDE_COMPONENT_LABEL"/>
         <field name="excludeMenus" type="menuitem" menuType="mainmenu" published="1" clientId="0" multiple="multiple" label="COM_LSCACHE_FIELD_EXCLUDE_MENU_LABEL" />
         <field name="excludeURLs" type="textarea" default="" class="input-xxlarge" rows="15" filter="raw" label="COM_LSCACHE_FIELD_EXCLUDE_URL_LABEL" hint="COM_LSCACHE_FIELD_EXCLUDE_URL_DESC" />
     </fieldset>

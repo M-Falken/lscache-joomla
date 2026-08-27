@@ -116,6 +116,7 @@ class plgSystemLSCache extends CMSPlugin {
         require_once __DIR__ . '/components/base.php';
         require_once __DIR__ . '/components/helper.php';
         $this->componentHelper = new LSCacheComponentsHelper($this);
+        define('LITESPEED_CACHE_HELPER', $this->componentHelper);
 
         $this->purgeObject = (object) array('tags' => array(), 'urls' => array(), 'option' => "", 'idField' => "", 'ids' => array(), 'purgeAll' => false, 'recacheAll' => false);
         $this->purgeObject->autoRecache = $this->settings->get('autoRecache', 0);

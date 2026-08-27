@@ -52,10 +52,13 @@ class LSCacheComponentsHelper
     
     public function getCustomisedUrlComponents(){
         $components = array();
-        foreach($this->activeComponents as $com_name => $component){
-            getInstanceInternal($$component[self::COM_CLASSNAME]);
+        foreach($this->activeComponents as $com_element => $component){
+            $this->getInstanceInternal($component);
             if($this->isMethodOverridden($component[self::COM_CLASSNAME], 'getComMap')){
-                $components[] = $com_name;
+                $components[] = (object) [
+                            'value' => $com_element,
+                            'text' => $com_element . ": " . $component[self::COM_NAME],
+                        ];
             }
         }
         return $components;

@@ -2291,7 +2291,7 @@ class plgSystemLSCache extends CMSPlugin {
      * Écrit dans le même fichier de suivi que le bouton admin, donc la carte de
      * progression affiche un rebuild CLI sans rien avoir à changer.
      */
-    public function onLSCacheRebuildCli($limit = 0, $dryRun = false, $check = 0, $cookieHeader = '') {
+    public function onLSCacheRebuildCli($limit = 0, $dryRun = false, $check = 0, $cookieHeader = '', $label = '') {
         if (PHP_SAPI !== 'cli') {
             return array('status' => 'error', 'error' => 'onLSCacheRebuildCli is CLI only');
         }
@@ -2348,7 +2348,7 @@ class plgSystemLSCache extends CMSPlugin {
         // Un plantage doit laisser un etat terminal : sinon le fichier reste sur « running »
         // et le verrou anti-cumul bloque les relances jusqu'au seuil d'inactivite.
         try {
-            $this->crawlUrls($crawlList, false, true, false, true, $cookieHeader);
+            $this->crawlUrls($crawlList, false, true, false, true, $cookieHeader, $label);
         } catch (\Throwable $e) {
             file_put_contents($this->getProgressFile(), json_encode(array(
                 'status'  => 'error',
@@ -2370,6 +2370,7 @@ class plgSystemLSCache extends CMSPlugin {
         $json['concurrency'] = (int) $this->settings->get('crawlConcurrency', 5);
         $json['delay']       = (int) $this->settings->get('crawlDelay', 0);
         $json['cookie']      = $cookieHeader;
+        $json['label']       = $label;
 
         return $json;
     }
@@ -2516,7 +2517,7 @@ class plgSystemLSCache extends CMSPlugin {
         return (string) $this->app->get('language', 'en-GB');
     }
 
-    private function crawlUrls($urls, $output = true, $preRouted = false, $enforceDuration = true, $trackProgress = false, $cookieHeader = '') {
+    private function crawlUrls($urls, $output = true, $preRouted = false, $enforceDuration = true, $trackProgress = false, $cookieHeader = '', $label = '') {
         $prevTimeLimit = (int) ini_get('max_execution_time');
         set_time_limit(0);
 
@@ -2574,6 +2575,7 @@ class plgSystemLSCache extends CMSPlugin {
                 'started' => $progressStarted,
                 'updated' => $progressStarted,
                 'cookie'  => $cookieHeader,
+                'label'   => $label,
             ]));
         }
         if ($output) {
@@ -2679,6 +2681,7 @@ class plgSystemLSCache extends CMSPlugin {
                     'started' => $progressStarted,
                     'updated' => $lastFlush,
                     'cookie'  => $cookieHeader,
+                    'label'   => $label,
                 ]));
             }
 
@@ -2709,6 +2712,7 @@ class plgSystemLSCache extends CMSPlugin {
                 'finished' => time(),
                 'error'    => $breakReason,
                 'cookie'   => $cookieHeader,
+                'label'    => $label,
             );
             file_put_contents($progressFile, json_encode($finalState));
             $this->appendRebuildHistory($finalState);

@@ -28,6 +28,11 @@
  *                             que le compartiment « aucune decision », jamais celui d'un
  *                             visiteur qui a accepte ou refuse le consentement. Exemple :
  *                             --cookie=cookieconsent_status=allow
+ *   --label='Texte'           Intitulé humain associé à cette passe, affiché à la place du
+ *                             cookie brut dans l'historique de l'admin (ex. "Cookies
+ *                             acceptés", "Cookies refusés"). Sans --label, l'historique
+ *                             retombe sur la valeur de --cookie, ou sur un intitulé neutre
+ *                             si aucun des deux n'est fourni.
  *   --limit=N                 Ne traite que les N premières URLs (test de fumée).
  *   --quiet                   N'affiche que les erreurs. À utiliser en cron.
  *   --help                    Affiche cette aide.
@@ -37,7 +42,7 @@
  * @author    Grégory Roussel <siriusocteam@gmail.com>
  * @copyright 2026 Grégory Roussel. All rights reserved.
  * @license   http://www.gnu.org/licenses/gpl-2.0.html GNU/GPL
- * @version   1.5.25
+ * @version   1.5.26
  * @link      https://github.com/M-Falken
  */
 
@@ -46,7 +51,7 @@ if (PHP_SAPI !== 'cli') {
     exit('This script must be run from the command line.');
 }
 
-$options = getopt('', array('url::', 'dry-run', 'list', 'check::', 'limit::', 'cookie::', 'quiet', 'help'));
+$options = getopt('', array('url::', 'dry-run', 'list', 'check::', 'limit::', 'cookie::', 'label::', 'quiet', 'help'));
 
 if (isset($options['help'])) {
     $doc = file_get_contents(__FILE__);
@@ -77,6 +82,8 @@ if (isset($options['cookie'])) {
     }
 }
 $cookieHeader = implode('; ', $cookiePairs);
+
+$label = isset($options['label']) ? trim((string) $options['label']) : '';
 
 function lsc_out($message, $isError = false)
 {
@@ -214,7 +221,7 @@ try {
     // URLs sont ecartees au routage.
     PluginHelper::importPlugin('behaviour');
     PluginHelper::importPlugin('system', 'lscache');
-    $results = $app->triggerEvent('onLSCacheRebuildCli', array($limit, $dryRun, $check, $cookieHeader));
+    $results = $app->triggerEvent('onLSCacheRebuildCli', array($limit, $dryRun, $check, $cookieHeader, $label));
 } catch (\Throwable $e) {
     lsc_out('Echec de la reconstruction : ' . $e->getMessage(), true);
     lsc_out('  ' . get_class($e) . ' dans ' . basename($e->getFile()) . ':' . $e->getLine(), true);
@@ -237,6 +244,9 @@ if ($result === null) {
 if (isset($result['concurrency'])) {
     lsc_out('Reglages   : ' . (int) $result['concurrency'] . ' page(s) en parallele, pause '
           . (int) $result['delay'] . ' ms entre lancements');
+}
+if (!empty($result['label'])) {
+    lsc_out('Etiquette  : ' . $result['label']);
 }
 if (!empty($result['cookie'])) {
     lsc_out('Variante   : ' . $result['cookie']);

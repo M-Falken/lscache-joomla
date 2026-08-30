@@ -313,7 +313,7 @@ var _lscRebuild = {
         historyList.innerHTML = '';
         history.forEach(function (entry) {
             if (!entry || !entry.started) { return; }
-            var label = entry.cookie ? entry.cookie : _lscRebuild.historyDefault;
+            var label = entry.label ? entry.label : (entry.cookie ? entry.cookie : _lscRebuild.historyDefault);
             var when  = formatClock(entry.started);
             var state = entry.status === 'error' ? ('⚠ ' + (entry.error || '')) : ((entry.success || 0) + '/' + (entry.total || 0));
             var li = document.createElement('li');

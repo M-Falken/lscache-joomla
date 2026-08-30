@@ -57,6 +57,10 @@ $colSpan = $clientId === 1 ? 8 : 10;
             </div>
         </div>
         <small id="lscache-rebuild-text"><?php echo Text::_('COM_LSCACHE_REBUILD_STARTING'); ?></small>
+        <div id="lscache-rebuild-history" style="display:none;margin-top:8px;padding-top:6px;border-top:1px solid rgba(0,0,0,.1);font-size:0.85em;">
+            <strong id="lscache-rebuild-history-title"><?php echo Text::_('COM_LSCACHE_REBUILD_HISTORY_TITLE'); ?></strong>
+            <ul id="lscache-rebuild-history-list" style="margin:4px 0 0;padding-left:18px;"></ul>
+        </div>
     </div>
 </div>
 
@@ -277,7 +281,9 @@ var _lscRebuild = {
     completeMsg:   <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_COMPLETE_MSG')); ?>,
     pagesCached:   <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_PAGES_CACHED')); ?>,
     remaining:     <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_REMAINING')); ?>,
-    inDuration:    <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_IN_DURATION')); ?>
+    inDuration:    <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_IN_DURATION')); ?>,
+    historyTitle:  <?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_HISTORY_TITLE')); ?>,
+    historyDefault:<?php echo json_encode(Text::_('COM_LSCACHE_REBUILD_HISTORY_DEFAULT')); ?>
 };
 (function () {
     var progressUrl = 'index.php?option=com_ajax&plugin=lscache&group=system&format=json';
@@ -287,8 +293,35 @@ var _lscRebuild = {
     var title       = document.getElementById('lscache-rebuild-title');
     var dismissBtn  = document.getElementById('lscache-rebuild-dismiss');
     var alertEl     = wrapper.querySelector('.alert');
+    var historyBox  = document.getElementById('lscache-rebuild-history');
+    var historyList = document.getElementById('lscache-rebuild-history-list');
     var timer       = null;
     var errorCount  = 0;
+
+    function formatClock(unixSeconds) {
+        var d = new Date(unixSeconds * 1000);
+        var h = ('0' + d.getHours()).slice(-2);
+        var m = ('0' + d.getMinutes()).slice(-2);
+        return h + ':' + m;
+    }
+
+    function renderHistory(history) {
+        if (!Array.isArray(history) || !history.length) {
+            historyBox.style.display = 'none';
+            return;
+        }
+        historyList.innerHTML = '';
+        history.forEach(function (entry) {
+            if (!entry || !entry.started) { return; }
+            var label = entry.cookie ? entry.cookie : _lscRebuild.historyDefault;
+            var when  = formatClock(entry.started);
+            var state = entry.status === 'error' ? ('⚠ ' + (entry.error || '')) : ((entry.success || 0) + '/' + (entry.total || 0));
+            var li = document.createElement('li');
+            li.textContent = when + '  —  ' + label + '  —  ' + state;
+            historyList.appendChild(li);
+        });
+        historyBox.style.display = historyList.children.length ? 'block' : 'none';
+    }
 
     function setProgress(pct, label) {
         bar.style.width = pct + '%';
@@ -337,6 +370,7 @@ var _lscRebuild = {
                     return;
                 }
                 wrapper.style.display = 'block';
+                renderHistory(data.history);
                 if (data.status === 'starting') {
                     alertEl.className = 'alert alert-info';
                     bar.classList.add('progress-bar-animated');

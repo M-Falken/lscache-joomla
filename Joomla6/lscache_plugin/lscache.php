@@ -1893,6 +1893,40 @@ class plgSystemLSCache extends CMSPlugin {
         return rtrim($tmp, '/\\') . '/lscache_rebuild_progress.json';
     }
 
+    /**
+     * Emplacement de l'historique des reconstructions (memes contraintes que le fichier
+     * de suivi : tmp_path, pas /cache).
+     */
+    private function getHistoryFile() {
+        $tmp = (string) $this->app->get('tmp_path');
+        if (($tmp === '') || (!is_dir($tmp)) || (!is_writable($tmp))) {
+            $tmp = JPATH_ROOT . '/tmp';
+        }
+        return rtrim($tmp, '/\\') . '/lscache_rebuild_history.json';
+    }
+
+    /**
+     * Consigne une reconstruction terminee (succes ou erreur) dans un historique compact.
+     *
+     * Le fichier de suivi lui-meme est ecrase a chaque passe : sur un cron qui enchaine
+     * plusieurs variantes (defaut, puis --cookie=allow, puis --cookie=deny), la carte de
+     * l'admin ne montrait plus que la derniere au reveil, sans aucune trace de l'heure a
+     * laquelle les precedentes avaient tourne. Conserve les 20 dernieres entrees, la plus
+     * recente en tete.
+     */
+    private function appendRebuildHistory($entry) {
+        $file = $this->getHistoryFile();
+        $history = @json_decode(@file_get_contents($file), true);
+        if (!is_array($history)) {
+            $history = array();
+        }
+
+        array_unshift($history, $entry);
+        $history = array_slice($history, 0, 20);
+
+        file_put_contents($file, json_encode($history));
+    }
+
     public function onAjaxLscache() {
         if (!$this->isAdmin()) {
             return ['status' => 'idle'];
@@ -1927,6 +1961,13 @@ class plgSystemLSCache extends CMSPlugin {
             $json['status']  = 'stalled';
             $json['stalled'] = time() - $lastUpdate;
         }
+
+        // Le fichier de suivi lui-meme est ecrase a chaque passe : sur un cron qui enchaine
+        // plusieurs variantes de consentement, la carte ne montrerait sinon plus que la
+        // derniere. L'historique donne a l'admin l'heure de chacune des dernieres passes.
+        $history = @json_decode(@file_get_contents($this->getHistoryFile()), true);
+        $json['history'] = is_array($history) ? $history : array();
+
         return $json;
     }
 
@@ -2415,6 +2456,7 @@ class plgSystemLSCache extends CMSPlugin {
                 'success' => 0,
                 'started' => $progressStarted,
                 'updated' => $progressStarted,
+                'cookie'  => $cookieHeader,
             ]));
         }
         if ($output) {
@@ -2519,6 +2561,7 @@ class plgSystemLSCache extends CMSPlugin {
                     'success' => $success,
                     'started' => $progressStarted,
                     'updated' => $lastFlush,
+                    'cookie'  => $cookieHeader,
                 ]));
             }
 
@@ -2539,7 +2582,7 @@ class plgSystemLSCache extends CMSPlugin {
         }
 
         if ($trackProgress) {
-            file_put_contents($progressFile, json_encode([
+            $finalState = array(
                 'status'   => $break ? 'error' : 'completed',
                 'total'    => $count,
                 'current'  => $current,
@@ -2548,7 +2591,10 @@ class plgSystemLSCache extends CMSPlugin {
                 'updated'  => time(),
                 'finished' => time(),
                 'error'    => $breakReason,
-            ]));
+                'cookie'   => $cookieHeader,
+            );
+            file_put_contents($progressFile, json_encode($finalState));
+            $this->appendRebuildHistory($finalState);
         }
         $totalTime = round($this->microtimeMinus($begin, microtime()) / 1000000);
         if ($count == $current) {

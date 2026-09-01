@@ -299,10 +299,15 @@ var _lscRebuild = {
     var errorCount  = 0;
 
     function formatClock(unixSeconds) {
+        // Le jour seul suffirait tant que le rebuild garde ses entrees en un coup d'oeil,
+        // mais l'historique glisse sur plusieurs jours (jusqu'a 20 passes) : sans la date,
+        // une entree en bas de liste, la plus ancienne, est ambigue - hier, avant-hier ?
         var d = new Date(unixSeconds * 1000);
+        var day   = ('0' + d.getDate()).slice(-2);
+        var month = ('0' + (d.getMonth() + 1)).slice(-2);
         var h = ('0' + d.getHours()).slice(-2);
         var m = ('0' + d.getMinutes()).slice(-2);
-        return h + ':' + m;
+        return day + '/' + month + ' ' + h + ':' + m;
     }
 
     function renderHistory(history) {

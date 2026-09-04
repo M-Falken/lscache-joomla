@@ -14,7 +14,7 @@ $text = Text::_('COM_LSCACHE_BTN_PURGE_URL');
 $title = Text::_('COM_LSCACHE_BTN_PURGE_URL_TIP');
 ?>
 
-<button data-toggle="modal" onclick="jQuery( '#collapseModal' ).modal('show')" class="btn btn-small btn-success" title="<?php echo $title; ?>">
+<button type="button" data-bs-toggle="modal" data-bs-target="#collapseModal" class="btn btn-small btn-success" title="<?php echo $title; ?>">
 	<span class="icon-file-minus" aria-hidden="true"></span>
 	<?php echo $text; ?>
 </button>

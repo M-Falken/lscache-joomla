@@ -251,7 +251,10 @@ $colSpan = $clientId === 1 ? 8 : 10;
 			</table>
 		<?php endif; ?>
 <style type="text/css">
-    #collapseModal {width:45%;}
+    /* Atum force .modal-dialog .modal-body{padding:0} : sans marge sur notre
+       propre conteneur, le texte et le textarea collent au bord de la popup. */
+    #collapseModal .modal-dialog {max-width:45%;}
+    #collapseModal .container-popup {padding:1rem;}
 </style>
         <?php echo HTMLHelper::_(
             'bootstrap.renderModal',

@@ -106,9 +106,33 @@ class JFormFieldNoteCron extends NoteField
         return $names ? reset($names) : 'cookieconsent_status';
     }
 
+    /**
+     * Blocs d'explication qui ne concernent que les dimensions de vary REELLEMENT actives.
+     *
+     * Enseigner la chaine a trois passes a un site dont le vary consentement est coupe
+     * revient a lui faire tripler son crawl pour rien - et c'est du bruit qui masque
+     * l'unique commande dont il a besoin. Chaque bloc suit donc son reglage.
+     */
+    protected function getConditionalBlocks()
+    {
+        $settings = ComponentHelper::getParams('com_lscache');
+        $blocs    = array();
+
+        if ($settings->get('pagecacheVary', 1)) {
+            $blocs[] = Text::_('COM_LSCACHE_FIELD_CRON_NOTE_CONSENT');
+        }
+
+        if ($settings->get('mobileCacheVary', 0) == 1) {
+            $blocs[] = Text::_('COM_LSCACHE_FIELD_CRON_NOTE_DEVICE');
+        }
+
+        return implode('', $blocs);
+    }
+
     protected function getLabel()
     {
         $description = Text::_((string) $this->element['description']);
+        $description = str_replace('{conditionnels}', $this->getConditionalBlocks(), $description);
         $description = str_replace('{clipath}', $this->getCliPath(), $description);
         $description = str_replace('{phpbin}', $this->getPhpBinary(), $description);
         $description = str_replace('{urlopt}', $this->getUrlOption(), $description);

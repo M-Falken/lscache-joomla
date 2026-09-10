@@ -31,6 +31,14 @@ class LSCacheViewModules extends HtmlView
 	protected $state;
 
 	/**
+	 * Etat des dimensions de vary et de la couverture du prechauffage, ou null si la
+	 * collecte a echoue - l'encadre est alors simplement omis.
+	 *
+	 * @var  array|null
+	 */
+	protected $varyDiagnostic;
+
+	/**
 	 * Display the view
 	 *
 	 * @param   string  $tpl  The name of the template file to parse; automatically searches through the template paths.
@@ -48,6 +56,27 @@ class LSCacheViewModules extends HtmlView
 		$this->filterForm    = $this->get('FilterForm');
 		$this->activeFilters = $this->get('ActiveFilters');
 		$this->clientId      = $this->state->get('client_id');
+
+		// Diagnostic des dimensions de vary : le calcul vit dans le helper, la vue ne fait
+		// que le transmettre au gabarit. Un echec ne doit jamais priver l'administrateur de
+		// la liste des modules, qui est la raison d'etre de cet ecran.
+		//
+		// Le fichier est teste avant d'etre inclus : un require_once qui echoue leve une
+		// erreur fatale que try/catch ne rattrape pas, et le tableau de bord entier tombe.
+		// Le cas s'est produit avec un composant dont le manifest ne declarait pas encore
+		// helpers/ - une installation partielle doit couter l'encadre, pas l'ecran.
+		$this->varyDiagnostic = null;
+		$diagnosticHelper     = JPATH_COMPONENT_ADMINISTRATOR . '/helpers/varydiagnostic.php';
+
+		if (is_file($diagnosticHelper)) {
+			require_once $diagnosticHelper;
+
+			try {
+				$this->varyDiagnostic = LSCacheVaryDiagnostic::collect();
+			} catch (\Throwable $e) {
+				$this->varyDiagnostic = null;
+			}
+		}
 
 		// Check for errors.
 		if (count($errors = $this->get('Errors')))

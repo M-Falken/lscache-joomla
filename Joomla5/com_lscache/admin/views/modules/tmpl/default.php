@@ -64,6 +64,10 @@ $colSpan = $clientId === 1 ? 8 : 10;
     </div>
 </div>
 
+<?php if ($this->varyDiagnostic !== null) : ?>
+	<?php echo $this->loadTemplate('vary_diagnostic'); ?>
+<?php endif; ?>
+
 <?php if (!empty( $this->sidebar)) : ?>
 	<div id="j-sidebar-container" class="span2">
 		<?php echo $this->sidebar; ?>
@@ -298,8 +302,63 @@ var _lscRebuild = {
     var alertEl     = wrapper.querySelector('.alert');
     var historyBox  = document.getElementById('lscache-rebuild-history');
     var historyList = document.getElementById('lscache-rebuild-history-list');
+    // L'encadre de diagnostic est calcule au chargement de la page ; cette liste, elle,
+    // se rafraichit toutes les 2 s. Des que l'historique depasse ce que l'encadre a vu,
+    // il est perime et on propose de recharger plutot que de laisser deux blocs se
+    // contredire a l'ecran.
+    var staleBox    = document.getElementById('lscache-vary-stale');
+    var reloadBtn   = document.getElementById('lscache-vary-reload');
+
+    if (reloadBtn) {
+        reloadBtn.addEventListener('click', function () {
+            window.location.reload();
+        });
+    }
     var timer       = null;
     var errorCount  = 0;
+    var pollMs      = 0;
+    var veilleFin   = null;
+
+    // Une reconstruction complete enchaine plusieurs passes, une par compartiment de vary
+    // (defaut, cookies acceptes, cookies refuses), chacune dans son propre processus CLI.
+    // Le sondage s'arretait a la premiere passe terminee : les deux suivantes tournaient
+    // sans que la carte ne montre plus rien. On continue donc a sonder apres une fin, plus
+    // lentement, et pendant une duree bornee - assez pour voir demarrer la passe suivante,
+    // pas au point de sonder indefiniment sur un ecran laisse ouvert.
+    var VEILLE_MS   = 10000;
+    var VEILLE_DUREE = 10 * 60 * 1000;
+
+    function cadence(ms) {
+        if (pollMs === ms) { return; }
+        pollMs = ms;
+        clearInterval(timer);
+        timer = setInterval(poll, ms);
+    }
+
+    function arret() {
+        clearInterval(timer);
+        timer  = null;
+        pollMs = 0;
+    }
+
+    // Intitule de la passe en cours, meme logique d'affichage que l'historique.
+    function intitulePasse(data) {
+        if (data.label)  { return data.label; }
+        if (data.cookie) { return data.cookie; }
+        return _lscRebuild.historyDefault;
+    }
+
+    // Une fin de passe ouvre une fenetre de veille ; un nouveau demarrage la referme.
+    function veille(actif) {
+        if (actif) {
+            if (veilleFin === null) { veilleFin = Date.now() + VEILLE_DUREE; }
+            if (Date.now() > veilleFin) { arret(); return; }
+            cadence(VEILLE_MS);
+        } else {
+            veilleFin = null;
+            cadence(2000);
+        }
+    }
 
     function formatClock(unixSeconds) {
         // Le jour seul suffirait tant que le rebuild garde ses entrees en un coup d'oeil,
@@ -311,6 +370,32 @@ var _lscRebuild = {
         var h = ('0' + d.getHours()).slice(-2);
         var m = ('0' + d.getMinutes()).slice(-2);
         return day + '/' + month + ' ' + h + ':' + m;
+    }
+
+    // L'encadre de diagnostic est calcule au chargement de la page. Il devient perime des
+    // qu'une passe se termine ou qu'une purge survient apres ce rendu. On compare des
+    // HORODATAGES et non un nombre d'entrees : l'historique est plafonne a 20, sa taille
+    // cesse donc d'augmenter des le plafond atteint - un compteur n'y verrait plus jamais
+    // rien changer, ce qui rendait cet avis muet sur toute installation un peu agee.
+    function checkDiagnosticStale(data) {
+        if ((!staleBox) || (staleBox.hidden === false)) {
+            return;
+        }
+
+        var seen    = (typeof window._lscDiagLatest === 'number') ? window._lscDiagLatest : 0;
+        var history = (data && Array.isArray(data.history)) ? data.history : [];
+
+        var perime = history.some(function (entry) {
+            return entry && (((entry.finished || entry.updated) || 0) > seen);
+        });
+
+        if ((!perime) && (typeof window._lscDiagPurge === 'number')) {
+            perime = (((data && data.lastPurge) || 0) > window._lscDiagPurge);
+        }
+
+        if (perime) {
+            staleBox.hidden = false;
+        }
     }
 
     function renderHistory(history) {
@@ -356,7 +441,7 @@ var _lscRebuild = {
     }
 
     dismissBtn.addEventListener('click', function () {
-        clearInterval(timer);
+        arret();
         wrapper.style.display = 'none';
         fetch(progressUrl + '&dismiss=1', {cache: 'no-store'}).catch(function () {});
     });
@@ -366,15 +451,16 @@ var _lscRebuild = {
             .then(function (r) { return r.json(); })
             .then(function (resp) {
                 if (!resp || resp.success === false) {
-                    if (++errorCount >= 3) { clearInterval(timer); }
+                    if (++errorCount >= 3) { arret(); }
                     return;
                 }
                 errorCount = 0;
                 var raw  = (resp && resp.data) ? resp.data : resp;
                 var data = Array.isArray(raw) ? raw[0] : raw;
+                checkDiagnosticStale(data);
                 if (!data || !data.status || data.status === 'idle') {
                     wrapper.style.display = 'none';
-                    clearInterval(timer);
+                    arret();
                     return;
                 }
                 wrapper.style.display = 'block';
@@ -384,9 +470,16 @@ var _lscRebuild = {
                     bar.classList.add('progress-bar-animated');
                     bar.style.background = '';
                     dismissBtn.style.display = 'none';
-                    title.textContent = _lscRebuild.inProgress;
+                    veille(false);
+                    title.textContent = _lscRebuild.inProgress + ' — ' + intitulePasse(data);
                     setProgress(0, _lscRebuild.starting);
                 } else if (data.status === 'running') {
+                    veille(false);
+                    alertEl.className = 'alert alert-info';
+                    bar.classList.add('progress-bar-animated');
+                    bar.style.background = '';
+                    dismissBtn.style.display = 'none';
+                    title.textContent = _lscRebuild.inProgress + ' — ' + intitulePasse(data);
                     var total   = data.total   || 1;
                     var current = data.current || 0;
                     var success = data.success || 0;
@@ -406,17 +499,17 @@ var _lscRebuild = {
                     var msg = _lscRebuild.completeMsg + ' ' + (data.success || 0) + ' / ' + (data.total || 0) + ' ' + _lscRebuild.pagesCached;
                     if (duration) { msg += ' ' + _lscRebuild.inDuration + ' ' + duration; }
                     setProgress(100, msg);
-                    title.textContent = '✓ ' + _lscRebuild.titleComplete;
+                    title.textContent = '✓ ' + _lscRebuild.titleComplete + ' — ' + intitulePasse(data);
                     dismissBtn.style.display = 'inline-block';
-                    clearInterval(timer);
+                    veille(true);
                 } else if (data.status === 'error') {
                     bar.classList.remove('progress-bar-animated');
                     bar.style.background = '#d9534f';
                     alertEl.className = 'alert alert-danger';
-                    title.textContent = _lscRebuild.titleError;
+                    title.textContent = _lscRebuild.titleError + ' — ' + intitulePasse(data);
                     text.textContent = data.error || 'Unknown error';
                     dismissBtn.style.display = 'inline-block';
-                    clearInterval(timer);
+                    arret();
                 } else if (data.status === 'stalled') {
                     // Le plugin marque ainsi un crawl détaché mort sans avoir pu écrire
                     // son état final. On fige la barre sur la dernière valeur connue au
@@ -431,15 +524,15 @@ var _lscRebuild = {
                     setProgress(sPct, _lscRebuild.stalledAt + ' ' + sCurrent + ' / ' + sTotal
                         + ' ' + _lscRebuild.pagesCached + '. ' + _lscRebuild.stalledHint);
                     dismissBtn.style.display = 'inline-block';
-                    clearInterval(timer);
+                    arret();
                 }
             })
             .catch(function () {
-                if (++errorCount >= 3) { clearInterval(timer); }
+                if (++errorCount >= 3) { arret(); }
             });
     }
 
     poll();
-    timer = setInterval(poll, 2000);
+    cadence(2000);
 })();
 </script>

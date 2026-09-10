@@ -33,6 +33,13 @@
  *                             acceptés", "Cookies refusés"). Sans --label, l'historique
  *                             retombe sur la valeur de --cookie, ou sur un intitulé neutre
  *                             si aucun des deux n'est fourni.
+ *   --user-agent=AGENT        Agent utilisé par le crawler. Indispensable dès que le
+ *                             réglage « Vary sur appareil » est actif : le compartiment
+ *                             mobile n'est sinon jamais préchauffé, l'agent par défaut
+ *                             étant classé bureau par Joomla. Deux raccourcis :
+ *                               --user-agent=mobile   agent iOS, classé mobile
+ *                               --user-agent=desktop  agent par défaut (explicite)
+ *                             Toute autre valeur est passée telle quelle.
  *   --limit=N                 Ne traite que les N premières URLs (test de fumée).
  *   --quiet                   N'affiche que les erreurs. À utiliser en cron.
  *   --help                    Affiche cette aide.
@@ -51,7 +58,8 @@ if (PHP_SAPI !== 'cli') {
     exit('This script must be run from the command line.');
 }
 
-$options = getopt('', array('url::', 'dry-run', 'list', 'check::', 'limit::', 'cookie::', 'label::', 'quiet', 'help'));
+$options = getopt('', array('url::', 'dry-run', 'list', 'check::', 'limit::', 'cookie::', 'label::',
+                            'user-agent::', 'quiet', 'help'));
 
 if (isset($options['help'])) {
     $doc = file_get_contents(__FILE__);
@@ -84,6 +92,21 @@ if (isset($options['cookie'])) {
 $cookieHeader = implode('; ', $cookiePairs);
 
 $label = isset($options['label']) ? trim((string) $options['label']) : '';
+
+// L'agent decide du compartiment appareil : Joomla classe le client sur cette seule
+// chaine. Les deux raccourcis evitent a l'administrateur d'avoir a en composer une a la
+// main - une chaine mal formee serait classee bureau et la passe rechaufferait
+// silencieusement le compartiment deja chaud, en se declarant mobile dans l'historique.
+$userAgent = isset($options['user-agent']) ? trim((string) $options['user-agent']) : '';
+if (strcasecmp($userAgent, 'mobile') === 0) {
+    // « iPhone » suffit a WebClient::detectPlatform() pour lever le drapeau mobile ; le
+    // suffixe lscache_runner reste present pour rester identifiable dans les logs.
+    $userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15'
+               . ' (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1'
+               . ' (compatible; lscache_runner)';
+} else if (strcasecmp($userAgent, 'desktop') === 0) {
+    $userAgent = '';
+}
 
 function lsc_out($message, $isError = false)
 {
@@ -221,7 +244,8 @@ try {
     // URLs sont ecartees au routage.
     PluginHelper::importPlugin('behaviour');
     PluginHelper::importPlugin('system', 'lscache');
-    $results = $app->triggerEvent('onLSCacheRebuildCli', array($limit, $dryRun, $check, $cookieHeader, $label));
+    $results = $app->triggerEvent('onLSCacheRebuildCli',
+        array($limit, $dryRun, $check, $cookieHeader, $label, $userAgent));
 } catch (\Throwable $e) {
     lsc_out('Echec de la reconstruction : ' . $e->getMessage(), true);
     lsc_out('  ' . get_class($e) . ' dans ' . basename($e->getFile()) . ':' . $e->getLine(), true);
@@ -250,6 +274,9 @@ if (!empty($result['label'])) {
 }
 if (!empty($result['cookie'])) {
     lsc_out('Variante   : ' . $result['cookie']);
+}
+if (!empty($result['agent'])) {
+    lsc_out('Agent      : ' . $result['agent']);
 }
 
 if ($result['status'] === 'coverage') {

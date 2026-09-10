@@ -2291,7 +2291,7 @@ class plgSystemLSCache extends CMSPlugin {
      * Écrit dans le même fichier de suivi que le bouton admin, donc la carte de
      * progression affiche un rebuild CLI sans rien avoir à changer.
      */
-    public function onLSCacheRebuildCli($limit = 0, $dryRun = false, $check = 0, $cookieHeader = '', $label = '') {
+    public function onLSCacheRebuildCli($limit = 0, $dryRun = false, $check = 0, $cookieHeader = '', $label = '', $userAgent = '') {
         if (PHP_SAPI !== 'cli') {
             return array('status' => 'error', 'error' => 'onLSCacheRebuildCli is CLI only');
         }
@@ -2348,7 +2348,7 @@ class plgSystemLSCache extends CMSPlugin {
         // Un plantage doit laisser un etat terminal : sinon le fichier reste sur « running »
         // et le verrou anti-cumul bloque les relances jusqu'au seuil d'inactivite.
         try {
-            $this->crawlUrls($crawlList, false, true, false, true, $cookieHeader, $label);
+            $this->crawlUrls($crawlList, false, true, false, true, $cookieHeader, $label, $userAgent);
         } catch (\Throwable $e) {
             file_put_contents($this->getProgressFile(), json_encode(array(
                 'status'  => 'error',
@@ -2371,6 +2371,7 @@ class plgSystemLSCache extends CMSPlugin {
         $json['delay']       = (int) $this->settings->get('crawlDelay', 0);
         $json['cookie']      = $cookieHeader;
         $json['label']       = $label;
+        $json['agent']       = $userAgent;
 
         return $json;
     }
@@ -2453,9 +2454,48 @@ class plgSystemLSCache extends CMSPlugin {
     }
 
     /**
+     * Obtient le cookie de variance correspondant a un jeu de cookies de visiteur.
+     *
+     * Une seule requete, sur une URL rendue volontairement non cachable par un parametre
+     * aleatoire : elle force l'execution de PHP, qui calcule la cle de variance et la
+     * renvoie dans un Set-Cookie. Toutes les requetes du crawl porteront ensuite cette
+     * valeur, et LiteSpeed rangera leurs reponses dans le bon compartiment.
+     *
+     * @return  string  Valeur du cookie de variance, ou '' si la sonde n'a rien rendu -
+     *                  le crawl se poursuit alors comme avant, sans rien casser.
+     */
+    private function resolveVaryCookie($root, $cookieHeader) {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $root . '/?lscache_vary_probe=' . mt_rand());
+        curl_setopt($ch, CURLOPT_COOKIE, $cookieHeader);
+        curl_setopt($ch, CURLOPT_HEADER, true);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
+        curl_setopt($ch, CURLOPT_MAXREDIRS, 1);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (compatible; lscache_probe)');
+        $response = curl_exec($ch);
+        curl_close($ch);
+
+        if (!is_string($response)) {
+            return '';
+        }
+
+        $pattern = '/^set-cookie:\s*' . preg_quote(LiteSpeedCacheBase::VARY_COOKIE, '/') . '=([^;\s]+)/mi';
+        if (preg_match($pattern, $response, $m)) {
+            return $m[1];
+        }
+
+        return '';
+    }
+
+    /**
      * Prépare un handle curl pour le pré-chauffage d'une page.
      */
-    private function newCrawlHandle($absoluteUrl, $root, $cookieHeader = '') {
+    private function newCrawlHandle($absoluteUrl, $root, $cookieHeader = '', $userAgent = '') {
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $absoluteUrl);
         if ($cookieHeader !== '') {
@@ -2478,7 +2518,13 @@ class plgSystemLSCache extends CMSPlugin {
         curl_setopt($ch, CURLOPT_TIMEOUT, 30);
         // Browser-like UA keeps WAFs and security plugins happy while the
         // "lscache_runner" suffix stays identifiable in server logs.
-        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (compatible; lscache_runner)');
+        //
+        // Surchargeable via --user-agent du CLI. Tant que l'agent etait fige, aucune passe
+        // ne pouvait remplir le compartiment mobile de mobileCacheVary : Joomla classe le
+        // client sur cette seule chaine (WebClient::detectPlatform), c'est donc elle qui
+        // decide du compartiment sous lequel LiteSpeed rangera la reponse.
+        curl_setopt($ch, CURLOPT_USERAGENT,
+            ($userAgent !== '') ? $userAgent : 'Mozilla/5.0 (compatible; lscache_runner)');
         curl_setopt($ch, CURLOPT_ENCODING, "gzip");
         curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
         curl_setopt($ch, CURLOPT_REFERER, $root . '/');
@@ -2517,7 +2563,7 @@ class plgSystemLSCache extends CMSPlugin {
         return (string) $this->app->get('language', 'en-GB');
     }
 
-    private function crawlUrls($urls, $output = true, $preRouted = false, $enforceDuration = true, $trackProgress = false, $cookieHeader = '', $label = '') {
+    private function crawlUrls($urls, $output = true, $preRouted = false, $enforceDuration = true, $trackProgress = false, $cookieHeader = '', $label = '', $userAgent = '') {
         $prevTimeLimit = (int) ini_get('max_execution_time');
         set_time_limit(0);
 
@@ -2537,6 +2583,32 @@ class plgSystemLSCache extends CMSPlugin {
         $current = 0;
         $root = Uri::getInstance()->toString(array('scheme', 'host', 'port'));
         $recacheDuration = $this->settings->get('recacheDuration', 30) * 1000000;
+
+        // Sans cette resolution, une passe --cookie ne rechauffait RIEN.
+        //
+        // LiteSpeed ne compartimente que sur la valeur du cookie _lscache_vary, jamais
+        // sur le cookie de consentement lui-meme. Une requete portant
+        // cookieconsent_status=allow mais pas de _lscache_vary tombe donc dans le
+        // compartiment partage : si la passe par defaut vient de le remplir, elle recoit
+        // un hit, PHP ne s'execute pas, et le compartiment « allow » reste vide. Mesure
+        // MGF du 10/09/2026 : passe par defaut 15 min sur cache vide, puis « allow » et
+        // « deny » bouclees en 9 et 11 secondes - le temps de 4679 hits, pas celui de
+        // 4679 pages generees. Les trois passes du cron n'en rechauffaient qu'une.
+        //
+        // Le resultat va dans une variable DISTINCTE : $cookieHeader decrit la passe
+        // demandee et part tel quel dans le fichier de suivi et l'historique, sur lesquels
+        // l'encadre de diagnostic apparie les compartiments chauffes. Y laisser fuiter le
+        // cookie de variance resolu rendait la signature meconnaissable - une passe
+        // « cookieconsent_status=allow » etait enregistree
+        // « cookieconsent_status=allow; _lscache_vary=pagecache%3A... » et ne correspondait
+        // plus a aucun compartiment attendu, d'ou une couverture annoncee a tort incomplete.
+        $crawlCookie = $cookieHeader;
+        if ($cookieHeader !== '') {
+            $vary = $this->resolveVaryCookie($root, $cookieHeader);
+            if ($vary !== '') {
+                $crawlCookie = $cookieHeader . '; ' . LiteSpeedCacheBase::VARY_COOKIE . '=' . $vary;
+            }
+        }
 
         // Pages demandées en parallèle. Le crawl passe l'essentiel de son temps à
         // attendre le serveur, pas à travailler : les lancer par lots divise la durée
@@ -2576,6 +2648,7 @@ class plgSystemLSCache extends CMSPlugin {
                 'updated' => $progressStarted,
                 'cookie'  => $cookieHeader,
                 'label'   => $label,
+                'agent'   => $userAgent,
             ]));
         }
         if ($output) {
@@ -2614,7 +2687,7 @@ class plgSystemLSCache extends CMSPlugin {
                     usleep($crawlDelay * 1000);
                 }
 
-                $ch = $this->newCrawlHandle($this->absoluteCrawlUrl($root, $curlurl), $root, $cookieHeader);
+                $ch = $this->newCrawlHandle($this->absoluteCrawlUrl($root, $curlurl), $root, $crawlCookie, $userAgent);
                 curl_multi_add_handle($mh, $ch);
                 $inFlight[spl_object_id($ch)] = $curlurl;
             }
@@ -2682,6 +2755,7 @@ class plgSystemLSCache extends CMSPlugin {
                     'updated' => $lastFlush,
                     'cookie'  => $cookieHeader,
                     'label'   => $label,
+                    'agent'   => $userAgent,
                 ]));
             }
 
@@ -2713,6 +2787,7 @@ class plgSystemLSCache extends CMSPlugin {
                 'error'    => $breakReason,
                 'cookie'   => $cookieHeader,
                 'label'    => $label,
+                'agent'    => $userAgent,
             );
             file_put_contents($progressFile, json_encode($finalState));
             $this->appendRebuildHistory($finalState);

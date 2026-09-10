@@ -13,6 +13,7 @@
 
 defined('_JEXEC') or die;
 
+use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
 
 $diag     = $this->varyDiagnostic;
@@ -128,6 +129,54 @@ $badge      = $stateClass[$coverage['state']] ?? 'secondary';
             <p class="text-warning mt-2 mb-0">
                 <?php echo Text::sprintf('COM_LSCACHE_VARY_DIAG_COVERAGE_ERRORS', (int) $coverage['errors']); ?>
             </p>
+        <?php endif; ?>
+
+        <hr>
+
+        <?php $purges = $diag['purges']; ?>
+        <p class="mb-2">
+            <strong><?php echo Text::_('COM_LSCACHE_VARY_DIAG_PURGES_TITLE'); ?></strong>
+            <?php if ($purges['last24h'] > 0) : ?>
+                <span class="badge bg-<?php echo $purges['alert'] ? 'danger' : 'secondary'; ?> ms-2">
+                    <?php echo Text::sprintf('COM_LSCACHE_VARY_DIAG_PURGES_COUNT', (int) $purges['last24h']); ?>
+                </span>
+            <?php endif; ?>
+        </p>
+
+        <?php if (empty($purges['entries'])) : ?>
+            <p class="text-muted mb-0"><?php echo Text::_('COM_LSCACHE_VARY_DIAG_PURGES_NONE'); ?></p>
+        <?php else : ?>
+            <ul class="list-unstyled small mb-2">
+            <?php foreach ($purges['entries'] as $p) : ?>
+                <li>
+                    <span class="d-inline-block" style="min-width:9rem;">
+                        <?php echo HTMLHelper::_('date', gmdate('Y-m-d H:i:s', $p['time']), 'd/m H:i'); ?>
+                    </span>
+                    <span class="badge bg-<?php echo $p['origin'] === 'site' ? 'warning' : 'secondary'; ?>">
+                        <?php echo Text::_('COM_LSCACHE_VARY_DIAG_ORIGIN_' . strtoupper($p['origin'])); ?>
+                    </span>
+                    <span class="text-muted ms-2"><?php echo htmlspecialchars($p['detail'], ENT_QUOTES, 'UTF-8'); ?></span>
+                </li>
+            <?php endforeach; ?>
+            </ul>
+
+            <?php if ($purges['interval'] !== null) : ?>
+                <p class="text-muted mb-1">
+                    <?php echo Text::sprintf('COM_LSCACHE_VARY_DIAG_PURGES_INTERVAL',
+                        round($purges['interval'] / 3600, 1), round($purges['ttl'] / 3600, 1)); ?>
+                </p>
+            <?php endif; ?>
+
+            <?php // Hors du test sur l'intervalle : une seule purge suffit a alerter. ?>
+            <?php if ($purges['alert']) : ?>
+                <p class="text-danger mb-0">
+                    <?php echo Text::sprintf('COM_LSCACHE_VARY_DIAG_PURGES_ALERT', (int) $purges['siteCount']); ?>
+                    <?php if ($purges['rebuild'] !== null) : ?>
+                        <?php echo ' ' . Text::sprintf('COM_LSCACHE_VARY_DIAG_PURGES_COST',
+                            (int) round($purges['rebuild'] / 60)); ?>
+                    <?php endif; ?>
+                </p>
+            <?php endif; ?>
         <?php endif; ?>
 
         <hr>

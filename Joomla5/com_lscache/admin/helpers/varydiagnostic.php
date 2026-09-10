@@ -60,6 +60,7 @@ class LSCacheVaryDiagnostic
             'buckets'     => $buckets,
             'coverage'    => self::coverage($params, $consent, $device),
             'doubleCache' => PluginHelper::isEnabled('system', 'cache'),
+            'purges'      => self::purges($params),
             'cliPath'     => JPATH_PLUGINS . '/system/lscache/cli/rebuild.php',
             'phpBinary'   => self::phpBinary(),
         );
@@ -458,7 +459,11 @@ class LSCacheVaryDiagnostic
      *
      * @return  int|null  null si aucune purge n'a été enregistrée.
      */
-    private static function readLastPurge()
+    /**
+     * Emplacement d'un fichier d'etat du plugin : le tmp_path configure, et non /cache,
+     * ce dernier etant vide regulierement.
+     */
+    private static function tmpFile($nom)
     {
         $tmp = (string) Factory::getApplication()->get('tmp_path');
 
@@ -466,7 +471,12 @@ class LSCacheVaryDiagnostic
             $tmp = JPATH_ROOT . '/tmp';
         }
 
-        $file = rtrim($tmp, '/\\') . '/lscache_last_purge.json';
+        return rtrim($tmp, '/\\') . '/' . $nom;
+    }
+
+    private static function readLastPurge()
+    {
+        $file = self::tmpFile('lscache_last_purge.json');
 
         if (!is_readable($file)) {
             return null;
@@ -482,6 +492,109 @@ class LSCacheVaryDiagnostic
     }
 
     /**
+     * Historique des purges globales, ecrit par LiteSpeedCacheCore::purgeAllPublic().
+     *
+     * Une purge isolee se diagnostique, une purge recurrente se surveille. Sur MGF le
+     * 10/09/2026, le ramasse-miettes de plg_system_jspeed vidait tout le cache depuis une
+     * requete front anonyme a intervalle regulier : invisible sans cet affichage, et
+     * indiscernable d'un cache qui « ne prend pas ».
+     *
+     * L'intervalle moyen compare a la duree d'une reconstruction est le chiffre qui
+     * compte : en dessous, le prechauffage ne rattrape jamais son retard.
+     */
+    private static function purges($params)
+    {
+        $vide = array('entries' => array(), 'last24h' => 0, 'interval' => null,
+                      'rebuild' => null, 'ttl' => 0, 'siteCount' => 0, 'alert' => false);
+
+        $file = self::tmpFile('lscache_purge_history.json');
+
+        if (!is_readable($file)) {
+            return $vide;
+        }
+
+        $histo = json_decode((string) file_get_contents($file), true);
+
+        if ((!is_array($histo)) || empty($histo)) {
+            return $vide;
+        }
+
+        $dates     = array();
+        $entries   = array();
+        $siteCount = 0;
+
+        foreach ($histo as $e) {
+            if ((!is_array($e)) || empty($e['purged'])) {
+                continue;
+            }
+
+            $dates[] = (int) $e['purged'];
+
+            if (($e['client'] ?? '') === 'site') {
+                $siteCount++;
+            }
+
+            if (count($entries) < 5) {
+                $client = (string) ($e['client'] ?? '');
+                $detail = trim(((string) ($e['option'] ?? '')) . ' ' . ((string) ($e['task'] ?? '')));
+
+                if ($detail === '') {
+                    $detail = (string) ($e['uri'] ?? '');
+                }
+
+                $entries[] = array(
+                    'time'   => (int) $e['purged'],
+                    'origin' => in_array($client, array('site', 'administrator', 'cli'), true) ? $client : 'cli',
+                    'detail' => $detail,
+                );
+            }
+        }
+
+        if (empty($dates)) {
+            return $vide;
+        }
+
+        rsort($dates);
+        $seuil   = time() - 86400;
+        $last24h = count(array_filter($dates, function ($d) use ($seuil) { return $d > $seuil; }));
+
+        // Moyenne sur les ecarts reellement observes, et non sur une fenetre fixe :
+        // l'historique est plafonne a 20 entrees et peut couvrir quelques heures comme
+        // plusieurs jours selon le rythme des purges.
+        $interval = (count($dates) > 1)
+            ? (int) round(($dates[0] - $dates[count($dates) - 1]) / (count($dates) - 1))
+            : null;
+
+        // Duree de la derniere reconstruction menee a son terme.
+        $rebuild = null;
+        $hist    = self::readHistory();
+
+        if (is_array($hist)) {
+            foreach ($hist as $e) {
+                if (is_array($e) && (($e['status'] ?? '') === 'completed')
+                    && !empty($e['finished']) && !empty($e['started'])) {
+                    $rebuild = (int) $e['finished'] - (int) $e['started'];
+                    break;
+                }
+            }
+        }
+
+        return array(
+            'entries'  => $entries,
+            'last24h'  => $last24h,
+            'interval' => $interval,
+            'rebuild'  => $rebuild,
+            'ttl'      => (int) $params->get('cacheTimeout', 2000) * 60,
+            'siteCount' => $siteCount,
+            // Le signal qui compte n'est pas la frequence mais l'ORIGINE. Une purge
+            // declenchee depuis une page publique n'est jamais une decision humaine :
+            // c'est une extension tierce qui vide le cache a l'insu de l'administration.
+            // Une seule suffit a la signaler, meme si le rythme parait supportable.
+            'alert'    => ($siteCount > 0),
+        );
+    }
+
+    /**
      * Historique écrit par le plugin. Même emplacement que getHistoryFile() : tmp_path et
      * non /cache, ce dernier étant vidé régulièrement.
      *
@@ -489,13 +602,7 @@ class LSCacheVaryDiagnostic
      */
     private static function readHistory()
     {
-        $tmp = (string) Factory::getApplication()->get('tmp_path');
-
-        if (($tmp === '') || (!is_dir($tmp))) {
-            $tmp = JPATH_ROOT . '/tmp';
-        }
-
-        $file = rtrim($tmp, '/\\') . '/lscache_rebuild_history.json';
+        $file = self::tmpFile('lscache_rebuild_history.json');
 
         if (!is_readable($file)) {
             return null;

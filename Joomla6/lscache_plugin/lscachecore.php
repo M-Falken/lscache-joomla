@@ -140,9 +140,22 @@ class LiteSpeedCacheCore extends LiteSpeedCacheBase
                     ? substr((string) $_SERVER['HTTP_USER_AGENT'], 0, 120) : '';
             }
 
+            $dossier = rtrim($tmp, '/\\');
+            @file_put_contents($dossier . '/lscache_last_purge.json', json_encode($contexte));
+
+            // Une purge isolee ne dit rien : c'est la FREQUENCE qui revele un
+            // declencheur automatique. Sur MGF le 10/09/2026, une purge globale venue
+            // d'une requete front anonyme s'est averee provenir du ramasse-miettes de
+            // JSpeed, qui dispatche onLSCacheExpired depuis une page prise au hasard.
+            // Invisible tant que seule la derniere purge etait conservee.
+            $histo = @json_decode(@file_get_contents($dossier . '/lscache_purge_history.json'), true);
+            if (!is_array($histo)) {
+                $histo = array();
+            }
+            array_unshift($histo, $contexte);
             @file_put_contents(
-                rtrim($tmp, '/\\') . '/lscache_last_purge.json',
-                json_encode($contexte)
+                $dossier . '/lscache_purge_history.json',
+                json_encode(array_slice($histo, 0, 20))
             );
         } catch (\Throwable $e) {
             // Ignore : une purge reussie prime sur son horodatage.

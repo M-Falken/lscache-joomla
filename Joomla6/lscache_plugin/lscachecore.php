@@ -75,6 +75,78 @@ class LiteSpeedCacheCore extends LiteSpeedCacheBase
     {
         $LSheader = self::CACHE_PURGE . 'public,' . $this->site_only_tag;
         $this->liteSpeedHeader($LSheader);
+        $this->recordPurgeAll();
+    }
+
+    /**
+     * Horodate la derniere purge globale.
+     *
+     * L'encadre de diagnostic de l'admin juge la couverture du prechauffage sur
+     * l'historique des reconstructions, et ne pouvait jusqu'ici constater qu'une chose :
+     * l'age des passes. Une purge vide pourtant le cache instantanement, ce qui invalide
+     * toutes les passes anterieures quel que soit leur age - l'encadre continuait donc
+     * d'annoncer « toutes les variantes sont prechauffees » sur un cache entierement vide.
+     *
+     * C'est ici, et non chez les appelants, parce que c'est le point de passage unique de
+     * toute purge globale : bouton de l'admin, purge declenchee par une modification de
+     * contenu, ou requete de purge externe.
+     *
+     * Silencieux par construction : le suivi d'un diagnostic ne doit jamais faire echouer
+     * une purge.
+     *
+     * @since   1.5.28
+     */
+    protected function recordPurgeAll(): void
+    {
+        try {
+            $tmp = '';
+
+            if (class_exists('\Joomla\CMS\Factory')) {
+                $tmp = (string) \Joomla\CMS\Factory::getApplication()->get('tmp_path');
+            }
+
+            if (($tmp === '') || (!is_dir($tmp)) || (!is_writable($tmp))) {
+                $tmp = (defined('JPATH_ROOT') ? JPATH_ROOT : __DIR__) . '/tmp';
+            }
+
+            if (!is_dir($tmp)) {
+                return;
+            }
+
+            // Consigner l'ORIGINE, pas seulement l'heure : une purge globale survenue
+            // en plein crawl annule le travail des passes precedentes, et « quelque
+            // chose a purge a 15:58 » ne permet pas de la corriger. Le cas s'est produit
+            // sur MGF le 10/09/2026, au milieu d'une chaine de trois passes.
+            $contexte = array('purged' => time());
+
+            if (class_exists('\\Joomla\\CMS\\Factory')) {
+                $app = \Joomla\CMS\Factory::getApplication();
+
+                if ($app->isClient('administrator')) {
+                    $contexte['client'] = 'administrator';
+                } else if ($app->isClient('site')) {
+                    $contexte['client'] = 'site';
+                } else {
+                    $contexte['client'] = 'cli';
+                }
+
+                $input = $app->getInput();
+                $contexte['option'] = (string) $input->getCmd('option', '');
+                $contexte['task']   = (string) $input->getCmd('task', '');
+                $contexte['view']   = (string) $input->getCmd('view', '');
+                $contexte['uri']    = isset($_SERVER['REQUEST_URI'])
+                    ? substr((string) $_SERVER['REQUEST_URI'], 0, 200) : '';
+                $contexte['agent']  = isset($_SERVER['HTTP_USER_AGENT'])
+                    ? substr((string) $_SERVER['HTTP_USER_AGENT'], 0, 120) : '';
+            }
+
+            @file_put_contents(
+                rtrim($tmp, '/\\') . '/lscache_last_purge.json',
+                json_encode($contexte)
+            );
+        } catch (\Throwable $e) {
+            // Ignore : une purge reussie prime sur son horodatage.
+        }
     }
 
     /**

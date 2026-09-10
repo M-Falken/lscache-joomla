@@ -1914,6 +1914,18 @@ class plgSystemLSCache extends CMSPlugin {
      * laquelle les precedentes avaient tourne. Conserve les 20 dernieres entrees, la plus
      * recente en tete.
      */
+    /**
+     * Emplacement de l'horodatage de la derniere purge globale, ecrit par
+     * LiteSpeedCacheCore::purgeAllPublic(). Memes contraintes que les deux autres.
+     */
+    private function getPurgeFile() {
+        $tmp = (string) $this->app->get('tmp_path');
+        if (($tmp === '') || (!is_dir($tmp)) || (!is_writable($tmp))) {
+            $tmp = JPATH_ROOT . '/tmp';
+        }
+        return rtrim($tmp, '/\\') . '/lscache_last_purge.json';
+    }
+
     private function appendRebuildHistory($entry) {
         $file = $this->getHistoryFile();
         $history = @json_decode(@file_get_contents($file), true);
@@ -1967,6 +1979,13 @@ class plgSystemLSCache extends CMSPlugin {
         // derniere. L'historique donne a l'admin l'heure de chacune des dernieres passes.
         $history = @json_decode(@file_get_contents($this->getHistoryFile()), true);
         $json['history'] = is_array($history) ? $history : array();
+
+        // L'encadre de diagnostic de la carte est calcule au chargement de la page. Une
+        // purge survenue depuis le perime tout autant qu'une reconstruction terminee, et
+        // dans le sens le plus trompeur : il continue d'annoncer un cache chaud alors
+        // qu'il est vide. On remonte donc l'horodatage pour qu'il puisse le detecter.
+        $purge = @json_decode(@file_get_contents($this->getPurgeFile()), true);
+        $json['lastPurge'] = (is_array($purge) && !empty($purge['purged'])) ? (int) $purge['purged'] : 0;
 
         return $json;
     }

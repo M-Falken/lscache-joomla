@@ -14,7 +14,7 @@
  <url>http://www.litespeedtech.com/</url>
  <packager>LiteSpeed Technologies</packager>
  <packagerurl>https://www.litespeedtech.com/products#cpl</packagerurl>
- <description>Package to install the LiteSpeed LSCache pluginwith supporting component</description>
+ <description>Package to install the LiteSpeed LSCache plugin with supporting component</description>
  <scriptfile>pkg_script.php</scriptfile>
  <files>
    <file type="component" id="com_lscache">com_lscache.zip</file>

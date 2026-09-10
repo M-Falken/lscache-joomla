@@ -43,7 +43,7 @@ class Pkg_LSCacheInstallerScript implements InstallerScriptInterface {
     {
         $this->lscacheEnable();
 
-        $this->app->enqueueMessage('Successful installed.');
+        $this->app->enqueueMessage('Successfully installed.');
 
         return true;
     }
@@ -52,7 +52,7 @@ class Pkg_LSCacheInstallerScript implements InstallerScriptInterface {
     {
         $this->lscacheEnable();
 
-        $this->app->enqueueMessage('Successful updated.');
+        $this->app->enqueueMessage('Successfully updated.');
 
         return true;
     }
@@ -74,7 +74,7 @@ class Pkg_LSCacheInstallerScript implements InstallerScriptInterface {
             $app->enqueueMessage($ex->getMessage(), 'error');
         }        
 
-        $this->app->enqueueMessage('Successful uninstalled.');
+        $this->app->enqueueMessage('Successfully uninstalled.');
 
         return true;
     }

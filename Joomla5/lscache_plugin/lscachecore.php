@@ -148,7 +148,14 @@ class LiteSpeedCacheCore extends LiteSpeedCacheBase
             // d'une requete front anonyme s'est averee provenir du ramasse-miettes de
             // JSpeed, qui dispatche onLSCacheExpired depuis une page prise au hasard.
             // Invisible tant que seule la derniere purge etait conservee.
-            $histo = @json_decode(@file_get_contents($dossier . '/lscache_purge_history.json'), true);
+            // Lecture gardee : ce fichier a declare(strict_types=1), et file_get_contents()
+            // rend false quand l'historique n'existe pas encore. Passer ce false a
+            // json_decode() y leve une TypeError - avalee par le try/catch ci-dessous, si
+            // bien que l'historique n'etait jamais cree et ne pouvait donc jamais exister.
+            // Le @ masque les avertissements, pas les TypeError.
+            $brut  = @file_get_contents($dossier . '/lscache_purge_history.json');
+            $histo = is_string($brut) ? json_decode($brut, true) : null;
+
             if (!is_array($histo)) {
                 $histo = array();
             }

@@ -456,6 +456,49 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
         return $urls;
     }
     
+    /**
+     * Itemid utilisable pour une categorie : le sien, sinon celui du plus proche ancetre.
+     *
+     * @param   int    $cid          Categorie VirtueMart.
+     * @param   array  $catItemid    Carte categorie -> Itemid, issue des elements de menu.
+     * @param   array  $parents      Carte enfant -> parent de l'arbre des categories.
+     * @param   array  $cache        Memoisation, passee par reference : sur un catalogue
+     *                               profond la meme branche est remontee des centaines de
+     *                               fois, une par produit de la sous-categorie.
+     *
+     * @return  int    0 si aucun ancetre ne porte de menu.
+     */
+    private function categoryItemid($cid, array $catItemid, array $parents, array &$cache)
+    {
+        if (isset($cache[$cid])) {
+            return $cache[$cid];
+        }
+
+        $chain = array();
+        $cur   = $cid;
+        $found = 0;
+
+        // La condition d'arret sur $chain est une garde anti-cycle : une arborescence
+        // VirtueMart incoherente (categorie sa propre ancetre) ferait sinon tourner la
+        // boucle indefiniment pendant la collecte des URLs.
+        while ($cur && !isset($chain[$cur])) {
+            if (isset($catItemid[$cur])) {
+                $found = $catItemid[$cur];
+                break;
+            }
+            $chain[$cur] = true;
+            $cur = isset($parents[$cur]) ? $parents[$cur] : 0;
+        }
+
+        // Toute la branche remontee partage le meme resultat.
+        foreach (array_keys($chain) as $step) {
+            $cache[$step] = $found;
+        }
+        $cache[$cid] = $found;
+
+        return $found;
+    }
+
     public function getComMap()
     {
         $comUrls =  array();
@@ -495,6 +538,31 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
             // continue with empty map — categories without menu will be skipped
         }
 
+        // Arbre des categories, pour heriter de l'Itemid du plus proche ancetre.
+        //
+        // Exiger un menu sur LA categorie elle-meme ecartait 330 categories sur 416 et
+        // 568 produits sur 2780 (mesure MGF, 10/09/2026) : un produit range dans une
+        // sous-categorie sans menu n'etait prechauffe par aucun chemin, et payait donc
+        // une generation a froid a chaque premiere visite, dans chaque compartiment de
+        // vary. Or VirtueMart sert tres bien une sous-categorie sous l'Itemid d'un
+        // ancetre - c'est ce que fait un visiteur qui descend depuis le menu, et un
+        // appel direct le confirme (HTTP 200). La garde etait donc trop stricte.
+        $parents = array();
+        try {
+            $query = $db->createQuery()
+                    ->select($db->quoteName(array('category_child_id', 'category_parent_id')))
+                    ->from('#__virtuemart_category_categories');
+            $db->setQuery($query);
+            foreach ($db->loadObjectList() as $edge) {
+                $parents[(int) $edge->category_child_id] = (int) $edge->category_parent_id;
+            }
+        } catch (\Throwable) {
+            // Arbre indisponible : categoryItemid() retombe alors sur le comportement
+            // strict d'avant, sans jamais produire d'URL invalide.
+        }
+
+        $itemidCache = array();
+
         $query = $db->createQuery()
                 ->select('virtuemart_category_id')
                 ->from('#__virtuemart_categories');
@@ -502,11 +570,12 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
             $db->setQuery($query);
             $cateids = $db->loadColumn();
             foreach($cateids as $cateid){
-                $cid = (int) $cateid;
-                if (!isset($catItemid[$cid])) {
-                    continue; // no menu → VM would 403 on SEF mismatch
+                $cid    = (int) $cateid;
+                $itemid = $this->categoryItemid($cid, $catItemid, $parents, $itemidCache);
+                if (!$itemid) {
+                    continue; // aucun ancetre avec menu : rien a quoi rattacher l'URL
                 }
-                $comUrls[] = 'index.php?option=com_virtuemart&view=category&virtuemart_category_id=' . $cid . '&Itemid=' . $catItemid[$cid];
+                $comUrls[] = 'index.php?option=com_virtuemart&view=category&virtuemart_category_id=' . $cid . '&Itemid=' . $itemid;
             }
         } catch (\Throwable) {
             return array();
@@ -521,10 +590,14 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
             foreach($products as $product){
                 $cid = (int) $product->virtuemart_category_id;
                 $pid = (int) $product->virtuemart_product_id;
-                if (!$cid || !isset($catItemid[$cid])) {
-                    continue; // no usable Itemid → skip to avoid 403
+                if (!$cid) {
+                    continue;
                 }
-                $comUrls[] = 'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $pid . '&virtuemart_category_id=' . $cid . '&Itemid=' . $catItemid[$cid];
+                $itemid = $this->categoryItemid($cid, $catItemid, $parents, $itemidCache);
+                if (!$itemid) {
+                    continue; // aucun ancetre avec menu : rien a quoi rattacher l'URL
+                }
+                $comUrls[] = 'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $pid . '&virtuemart_category_id=' . $cid . '&Itemid=' . $itemid;
             }
         } catch (\Throwable) {
             return array();

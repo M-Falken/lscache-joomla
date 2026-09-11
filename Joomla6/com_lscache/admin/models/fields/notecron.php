@@ -126,6 +126,12 @@ class JFormFieldNoteCron extends NoteField
             $blocs[] = Text::_('COM_LSCACHE_FIELD_CRON_NOTE_DEVICE');
         }
 
+        // --purge-changed repose sur l'integration VirtueMart : sans elle, la tache
+        // echouerait a chaque passage du cron.
+        if (ComponentHelper::isEnabled('com_virtuemart')) {
+            $blocs[] = Text::_('COM_LSCACHE_FIELD_CRON_NOTE_PURGECHANGED');
+        }
+
         return implode('', $blocs);
     }
 

@@ -98,6 +98,16 @@ class LiteSpeedCacheCore extends LiteSpeedCacheBase
      */
     protected function recordPurgeAll(): void
     {
+        // Une seule trace par requete. L'installation du paquet declenche un evenement
+        // par extension (composant, plugin, module) et chacun relance la meme purge
+        // globale : trois lignes pour une seule purge faussaient le compte des 24 h et
+        // la moyenne affichee par l'encadre (MGF, 11/09/2026 : 3 x com_installer a 17:22).
+        static $consignee = false;
+        if ($consignee) {
+            return;
+        }
+        $consignee = true;
+
         try {
             $tmp = '';
 

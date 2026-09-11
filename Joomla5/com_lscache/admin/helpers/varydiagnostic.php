@@ -32,6 +32,11 @@ class LSCacheVaryDiagnostic
     const CONSENT_BUCKETS = 3;
 
     /**
+     * Nombre minimal de purges avant d'oser afficher un intervalle moyen.
+     */
+    const PURGE_MIN_SAMPLE = 4;
+
+    /**
      * Assemble l'état complet à afficher.
      *
      * @return  array
@@ -561,7 +566,11 @@ class LSCacheVaryDiagnostic
         // Moyenne sur les ecarts reellement observes, et non sur une fenetre fixe :
         // l'historique est plafonne a 20 entrees et peut couvrir quelques heures comme
         // plusieurs jours selon le rythme des purges.
-        $interval = (count($dates) > 1)
+        //
+        // En dessous de quatre points elle n'est pas affichee : deux purges manuelles
+        // espacees de trois minutes donnaient « une purge toutes les 0,1 h », un chiffre
+        // juste et depourvu de sens, qui desinforme plus qu'il n'informe.
+        $interval = (count($dates) >= self::PURGE_MIN_SAMPLE)
             ? (int) round(($dates[0] - $dates[count($dates) - 1]) / (count($dates) - 1))
             : null;
 

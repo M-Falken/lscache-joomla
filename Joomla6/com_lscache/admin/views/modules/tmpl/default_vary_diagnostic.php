@@ -148,7 +148,7 @@ $badge      = $stateClass[$coverage['state']] ?? 'secondary';
         <?php else : ?>
             <ul class="list-unstyled small mb-2">
             <?php foreach ($purges['entries'] as $p) : ?>
-                <li>
+                <li class="mb-1">
                     <span class="d-inline-block" style="min-width:9rem;">
                         <?php echo HTMLHelper::_('date', gmdate('Y-m-d H:i:s', $p['time']), 'd/m H:i'); ?>
                     </span>

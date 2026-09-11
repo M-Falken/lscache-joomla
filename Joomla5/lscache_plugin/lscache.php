@@ -2964,6 +2964,48 @@ class plgSystemLSCache extends CMSPlugin {
         return (string) $this->app->get('language', 'en-GB');
     }
 
+    /**
+     * Chemin de l'adresse canonique déclarée par une page reçue, ou null.
+     *
+     * Une fiche VirtueMart déclare pour canonique une adresse que ni la reconstruction ni
+     * les purges ne demandaient : sa première catégorie publiée, sans Itemid, que le
+     * routeur rattache en contexte de page au menu de la catégorie racine (MGF, fiche 489 :
+     * canonique /traceurs/<fiche>, alors que le crawl demandait
+     * /traceurs/options-accessoires/<fiche>). C'est pourtant l'adresse qu'indexe Google et
+     * que propose la recherche AJAX : elle restait froide. Hors requête web, aucune
+     * adresse interne ne se route vers elle - le choix du menu dépend du contexte - d'où
+     * la lecture dans la page elle-même plutôt qu'une imitation du routeur.
+     *
+     * Attribut lu avec ou sans guillemets : JSpeed les retire en minifiant.
+     */
+    private function canonicalPath($html, $rootHost) {
+        if (($html === '') || (!preg_match('/<link\b[^>]*\brel\s*=\s*["\']?canonical\b[^>]*>/i', $html, $link))) {
+            return null;
+        }
+        if (!preg_match('/\bhref\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>]+))/i', $link[0], $h)) {
+            return null;
+        }
+
+        $href = '';
+        for ($i = 1; $i <= 3; $i++) {
+            if (!empty($h[$i])) {
+                $href = $h[$i];
+                break;
+            }
+        }
+
+        $parts = parse_url(html_entity_decode($href, ENT_QUOTES, 'UTF-8'));
+        if (($parts === false) || empty($parts['path']) || ($parts['path'][0] !== '/')) {
+            return null;
+        }
+        // Jamais un autre domaine : le crawl ne réchauffe que ce site.
+        if (!empty($parts['host']) && (strtolower($parts['host']) !== $rootHost)) {
+            return null;
+        }
+
+        return $parts['path'] . (isset($parts['query']) ? '?' . $parts['query'] : '');
+    }
+
     private function crawlUrls($urls, $output = true, $preRouted = false, $enforceDuration = true, $trackProgress = false, $cookieHeader = '', $label = '', $userAgent = '') {
         $prevTimeLimit = (int) ini_get('max_execution_time');
         set_time_limit(0);
@@ -3071,18 +3113,32 @@ class plgSystemLSCache extends CMSPlugin {
         $inFlight = array();
         $mh       = curl_multi_init();
 
+        // Adresses canoniques relevées dans les pages reçues (voir canonicalPath()) :
+        // ajoutées en fin de file, déjà routées, et demandées une seule fois. $seen
+        // connaît d'avance la liste pré-routée, pour ne pas redemander une canonique qui
+        // y figure déjà plus loin.
+        $routedExtra = array();
+        $seen        = array();
+        $rootHost    = strtolower((string) parse_url($root, PHP_URL_HOST));
+        if ($preRouted) {
+            foreach ($queue as $p) {
+                $seen[$p] = true;
+            }
+        }
+
         while (true) {
             // Remplir la fenetre. Une entree non routable ne consomme pas de place.
             while ((!$break) && ($next < $count) && (count($inFlight) < $concurrency)) {
                 $path = $queue[$next];
                 $next++;
 
-                $curlurl = $this->resolveCrawlUrl($path, $preRouted);
+                $curlurl = isset($routedExtra[$next - 1]) ? $path : $this->resolveCrawlUrl($path, $preRouted);
                 if ($curlurl === null) {
                     // Comptee comme traitee, sinon la barre ne peut pas atteindre 100 %.
                     $current++;
                     continue;
                 }
+                $seen[$curlurl] = true;
 
                 if (($crawlDelay > 0) && ($current > 0)) {
                     usleep($crawlDelay * 1000);
@@ -3116,6 +3172,7 @@ class plgSystemLSCache extends CMSPlugin {
                 unset($inFlight[$id]);
 
                 $httpcode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                $body     = in_array($httpcode, $acceptCode) ? (string) curl_multi_getcontent($ch) : '';
                 curl_multi_remove_handle($mh, $ch);
 
                 $current++;
@@ -3123,6 +3180,15 @@ class plgSystemLSCache extends CMSPlugin {
 
                 if (in_array($httpcode, $acceptCode)) {
                     $success++;
+                    // La page déclare une canonique encore jamais demandée : elle part en fin
+                    // de file. Le total grandit d'autant, la barre de progression avec.
+                    $canonical = $this->canonicalPath($body, $rootHost);
+                    if (($canonical !== null) && (!isset($seen[$canonical]))) {
+                        $seen[$canonical] = true;
+                        $routedExtra[count($queue)] = true;
+                        $queue[] = $canonical;
+                        $count++;
+                    }
                 } else if ($httpcode == 428) {
                     $this->log('httpcode:' . $httpcode);
                     $breakReason = Text::_('COM_LSCACHE_ERR_CRAWLER_DISABLED');

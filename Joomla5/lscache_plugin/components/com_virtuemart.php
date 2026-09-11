@@ -511,11 +511,15 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
         return $found;
     }
 
-    public function getComMap()
+    /**
+     * Ce dont categoryItemid() a besoin : la carte categorie -> Itemid des menus, et
+     * l'arbre des categories. Partage par getComMap() et getProductRefresh(), qui doivent
+     * produire des URLs identiques pour une meme page.
+     *
+     * @return  array  [carte categorie -> Itemid, carte enfant -> parent]
+     */
+    private function itemidContext()
     {
-        $comUrls =  array();
-        $comUrls[] = 'index.php?option=com_virtuemart';
-
         $db = Factory::getDbo();
 
         // Map category_id → Itemid from published frontend menu items bound to VM
@@ -573,6 +577,17 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
             // strict d'avant, sans jamais produire d'URL invalide.
         }
 
+        return array($catItemid, $parents);
+    }
+
+    public function getComMap()
+    {
+        $comUrls =  array();
+        $comUrls[] = 'index.php?option=com_virtuemart';
+
+        $db = Factory::getDbo();
+
+        list($catItemid, $parents) = $this->itemidContext();
         $itemidCache = array();
 
         $query = $db->createQuery()
@@ -616,6 +631,148 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
         }
 
         return $comUrls;
+    }
+
+    /**
+     * Empreinte, produit par produit, de ce que les pages affichent de sa disponibilite.
+     *
+     * Sert a --purge-changed du CLI : les imports CSVI ecrivent le stock directement en
+     * base, sans aucun evenement VirtueMart, et LSCache ne sait donc pas quelles pages
+     * sont devenues fausses. Deux empreintes successives qui different designent un
+     * produit dont la fiche - et les listes de ses categories - ne disent plus la verite.
+     *
+     * N'y entre que ce qui se voit. Le stock est ramene aux paliers des gabarits (rupture,
+     * sous le minimum de commande, stock faible, disponible) : un fournisseur fait bouger
+     * les quantites a chaque import, et une page qui affiche « En stock » reste juste
+     * quand le stock passe de 48 a 45. Seul le palier « stock faible » garde la quantite,
+     * parce que le gabarit l'affiche en clair.
+     *
+     * @return  array  ['fp' => [produit => empreinte], 'parent' => [declinaison => parent]]
+     */
+    public function getStockFingerprints()
+    {
+        $db = Factory::getDbo();
+
+        // Les prix s'affichent sur les memes pages, et un import peut les modifier aussi.
+        $prices = array();
+        $query = $db->createQuery()
+                ->select($db->quoteName(array('virtuemart_product_id', 'virtuemart_shoppergroup_id',
+                    'product_price', 'override', 'product_override_price', 'price_quantity_start')))
+                ->from('#__virtuemart_product_prices')
+                ->order($db->quoteName('virtuemart_product_price_id'));
+        $db->setQuery($query);
+        foreach ($db->loadRowList() as $row) {
+            $pid = (int) array_shift($row);
+            $prices[$pid] = (isset($prices[$pid]) ? $prices[$pid] . ';' : '') . implode(':', $row);
+        }
+
+        $query = $db->createQuery()
+                ->select($db->quoteName(array('virtuemart_product_id', 'product_parent_id', 'product_in_stock',
+                    'product_ordered', 'low_stock_notification', 'product_availability', 'product_available_date',
+                    'product_stockhandle', 'product_discontinued', 'product_params', 'published')))
+                ->from('#__virtuemart_products');
+        $db->setQuery($query);
+
+        $fingerprints = array();
+        $parents      = array();
+        foreach ($db->loadObjectList() as $p) {
+            $pid   = (int) $p->virtuemart_product_id;
+            $stock = (int) $p->product_in_stock - (int) $p->product_ordered;
+
+            // Sous le minimum de commande, VirtueMart retire le bouton d'achat meme avec
+            // du stock (ProductModel : stock < min_order_level => orderable = false).
+            $min = 1;
+            if (preg_match('/min_order_level="?(\d+)/', (string) $p->product_params, $m)) {
+                $min = max(1, (int) $m[1]);
+            }
+
+            if ($stock < 1) {
+                $level = 'out';
+            } else if ($stock < $min) {
+                $level = 'min';
+            } else if ($stock <= (int) $p->low_stock_notification) {
+                $level = 'low' . $stock;
+            } else {
+                $level = 'ok';
+            }
+
+            $fingerprints[$pid] = substr(md5(implode('|', array(
+                $level,
+                (int) $p->published,
+                (int) $p->product_discontinued,
+                (string) $p->product_availability,
+                (string) $p->product_available_date,
+                (string) $p->product_stockhandle,
+                isset($prices[$pid]) ? $prices[$pid] : '',
+            ))), 0, 12);
+
+            if ((int) $p->product_parent_id > 0) {
+                $parents[$pid] = (int) $p->product_parent_id;
+            }
+        }
+
+        return array('fp' => $fingerprints, 'parent' => $parents);
+    }
+
+    /**
+     * Tags a purger et URLs a rechauffer pour un lot de produits.
+     *
+     * Les URLs suivent exactement le format de getComMap() - meme Itemid herite - pour
+     * rechauffer les pages que visiteurs et reconstruction nocturne demandent, et non une
+     * variante sans Itemid que personne ne visite.
+     *
+     * @param   int[]  $productIds
+     *
+     * @return  array  ['tags' => string[], 'urls' => string[]]
+     */
+    public function getProductRefresh(array $productIds)
+    {
+        $productIds = array_values(array_unique(array_filter(array_map('intval', $productIds))));
+        if (empty($productIds)) {
+            return array('tags' => array(), 'urls' => array());
+        }
+
+        list($catItemid, $parents) = $this->itemidContext();
+        $itemidCache = array();
+
+        $tags         = array();
+        $productUrls  = array();
+        $categoryUrls = array();
+        foreach ($productIds as $pid) {
+            $tags[] = 'com_virtuemart.product:' . $pid;
+        }
+
+        // Par tranches, pour borner la taille de la requete sur un gros import.
+        foreach (array_chunk($productIds, 500) as $chunk) {
+            foreach ($this->getProductCategories($chunk) as $row) {
+                $cid = (int) $row->virtuemart_category_id;
+                $pid = (int) $row->virtuemart_product_id;
+                if (!$cid) {
+                    continue;
+                }
+
+                // La liste de la categorie affiche le bouton du produit : elle est purgee
+                // meme si aucun menu ne permet ensuite de la rechauffer.
+                if (!isset($categoryUrls[$cid])) {
+                    $tags[] = 'com_virtuemart.category:' . $cid;
+                    $categoryUrls[$cid] = '';
+                }
+
+                $itemid = $this->categoryItemid($cid, $catItemid, $parents, $itemidCache);
+                if (!$itemid) {
+                    continue;
+                }
+
+                $categoryUrls[$cid] = 'index.php?option=com_virtuemart&view=category&virtuemart_category_id=' . $cid . '&Itemid=' . $itemid;
+                $productUrls[] = 'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $pid . '&virtuemart_category_id=' . $cid . '&Itemid=' . $itemid;
+            }
+        }
+
+        // Categories d'abord : une liste est plus visitee que chacune des fiches qu'elle montre.
+        return array(
+            'tags' => $tags,
+            'urls' => array_merge(array_values(array_filter($categoryUrls)), $productUrls),
+        );
     }
     
     

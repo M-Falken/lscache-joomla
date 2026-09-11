@@ -40,6 +40,16 @@
  *                               --user-agent=mobile   agent iOS, classé mobile
  *                               --user-agent=desktop  agent par défaut (explicite)
  *                             Toute autre valeur est passée telle quelle.
+ *   --purge-changed           Au lieu de reconstruire : purge et réchauffe les seules pages
+ *                             des produits VirtueMart dont ce qui s'affiche a changé depuis
+ *                             le passage précédent (disponibilité, prix, publication), ainsi
+ *                             que les listes de leurs catégories. Destiné au cron, pour les
+ *                             imports qui écrivent le stock en base sans prévenir LSCache
+ *                             (CSVI, Rocsvi...). Le premier passage ne purge rien : il pose
+ *                             l'état de référence. Combinable avec --dry-run (montre ce qui
+ *                             serait purgé, sans rien toucher) et --list. Un passage qui
+ *                             trouve le précédent encore en cours s'arrête sans erreur
+ *                             (code 0) : le suivant rattrapera.
  *   --limit=N                 Ne traite que les N premières URLs (test de fumée).
  *   --quiet                   N'affiche que les erreurs. À utiliser en cron.
  *   --help                    Affiche cette aide.
@@ -59,7 +69,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 $options = getopt('', array('url::', 'dry-run', 'list', 'check::', 'limit::', 'cookie::', 'label::',
-                            'user-agent::', 'quiet', 'help'));
+                            'user-agent::', 'purge-changed', 'quiet', 'help'));
 
 if (isset($options['help'])) {
     $doc = file_get_contents(__FILE__);
@@ -92,6 +102,8 @@ if (isset($options['cookie'])) {
 $cookieHeader = implode('; ', $cookiePairs);
 
 $label = isset($options['label']) ? trim((string) $options['label']) : '';
+
+$purgeChanged = isset($options['purge-changed']);
 
 // L'agent decide du compartiment appareil : Joomla classe le client sur cette seule
 // chaine. Les deux raccourcis evitent a l'administrateur d'avoir a en composer une a la
@@ -231,7 +243,7 @@ try {
 
 lsc_out('Site       : ' . $siteUrl);
 lsc_out('Demarrage  : ' . date('Y-m-d H:i:s'));
-if (!$dryRun && $limit === 0 && !function_exists('pcntl_signal')) {
+if (!$dryRun && !$purgeChanged && $limit === 0 && !function_exists('pcntl_signal')) {
     lsc_out('Note       : pcntl absent, ce processus ne survivra pas a la fermeture du');
     lsc_out('             terminal. Lancez-le avec nohup ... & ou sous screen/tmux.');
 }
@@ -244,10 +256,14 @@ try {
     // URLs sont ecartees au routage.
     PluginHelper::importPlugin('behaviour');
     PluginHelper::importPlugin('system', 'lscache');
-    $results = $app->triggerEvent('onLSCacheRebuildCli',
-        array($limit, $dryRun, $check, $cookieHeader, $label, $userAgent));
+    if ($purgeChanged) {
+        $results = $app->triggerEvent('onLSCachePurgeChangedCli', array($dryRun));
+    } else {
+        $results = $app->triggerEvent('onLSCacheRebuildCli',
+            array($limit, $dryRun, $check, $cookieHeader, $label, $userAgent));
+    }
 } catch (\Throwable $e) {
-    lsc_out('Echec de la reconstruction : ' . $e->getMessage(), true);
+    lsc_out(($purgeChanged ? 'Echec de la purge : ' : 'Echec de la reconstruction : ') . $e->getMessage(), true);
     lsc_out('  ' . get_class($e) . ' dans ' . basename($e->getFile()) . ':' . $e->getLine(), true);
     exit(1);
 }
@@ -263,6 +279,68 @@ foreach ((array) $results as $candidate) {
 if ($result === null) {
     lsc_out('Le plugin systeme LSCache n\'a pas repondu - est-il active ?', true);
     exit(1);
+}
+
+if ($purgeChanged) {
+    $productList = function ($result) {
+        return '  produits : ' . implode(', ', $result['productIds'])
+             . ((int) $result['products'] > count($result['productIds']) ? ', ...' : '');
+    };
+
+    switch ($result['status']) {
+        case 'baseline':
+            lsc_out(!empty($result['dryRun'])
+                ? 'Aucun instantane : un vrai passage enregistrerait l\'etat de ' . (int) $result['products']
+                  . ' produit(s), sans rien purger.'
+                : 'Instantane initial : ' . (int) $result['products'] . ' produit(s) enregistre(s). Rien a'
+                  . ' comparer donc rien de purge - les passages suivants purgeront les changements.');
+            exit(0);
+
+        case 'unchanged':
+            lsc_out('Aucun changement d\'affichage sur ' . (int) $result['products'] . ' produit(s).');
+            exit(0);
+
+        case 'busy':
+            // Code 0 : un chevauchement est normal quand un rechauffage dure plus que
+            // l'intervalle du cron, et le passage suivant rattrape tout. Le signaler en
+            // erreur ferait envoyer un courriel par cron pour rien.
+            lsc_out('Passage precedent encore en cours : celui-ci s\'arrete, le suivant rattrapera.');
+            exit(0);
+
+        case 'dry-run':
+            if ($listOnly) {
+                foreach ($result['urls'] as $url) {
+                    fwrite(STDOUT, $siteUrl . $url . PHP_EOL);
+                }
+                exit(0);
+            }
+            lsc_out(sprintf('Simulation : %d produit(s) modifie(s) -> %d tag(s) a purger, %d URL(s) a rechauffer.',
+                (int) $result['products'], (int) $result['tags'], count($result['urls'])));
+            lsc_out($productList($result));
+            if ((int) $result['unrouted'] > 0) {
+                lsc_out('  URLs non routables ecartees : ' . (int) $result['unrouted']);
+            }
+            foreach (array_slice($result['urls'], 0, 20) as $url) {
+                lsc_out('  ' . $siteUrl . $url);
+            }
+            if (count($result['urls']) > 20) {
+                lsc_out('  ... et ' . (count($result['urls']) - 20) . ' autres.');
+            }
+            lsc_out('Rien n\'a ete purge et l\'instantane n\'a pas bouge.');
+            exit(0);
+
+        case 'purged':
+            lsc_out(sprintf('Termine : %d produit(s) modifie(s), %d tag(s) purges en %d requete(s),'
+                . ' %d URL(s) rechauffee(s) en %d s.',
+                (int) $result['products'], (int) $result['tags'], (int) $result['requests'],
+                count($result['urls']), (int) $result['seconds']));
+            lsc_out($productList($result));
+            exit(0);
+
+        default:
+            lsc_out('Erreur : ' . (isset($result['error']) ? $result['error'] : 'inconnue'), true);
+            exit(1);
+    }
 }
 
 if (isset($result['concurrency'])) {

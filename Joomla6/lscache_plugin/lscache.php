@@ -40,6 +40,13 @@ class plgSystemLSCache extends CMSPlugin {
     // considéré mort. Marge large : avec le flush temporisé de crawlUrls() et le
     // timeout curl de 30 s, l'écart normal entre deux écritures ne dépasse pas ~60 s.
     const REBUILD_STALE_SECONDS = 180;
+    // Format de l'instantane de stock de --purge-changed. A incrementer des que le calcul
+    // de l'empreinte change : l'ancien instantane est alors ignore et un nouveau pose,
+    // au lieu de voir tout le catalogue « modifie » et purge d'un coup.
+    const STOCK_SNAPSHOT_VERSION = 1;
+    // Tags par requete de purge HTTP : garde l'en-tete X-LiteSpeed-Purge qui en resulte
+    // bien en deca des limites de taille d'en-tete du serveur.
+    const PURGE_TAGS_PER_REQUEST = 50;
     const CATEGORY_CONTEXTS = array('com_categories.category', 'com_banners.category', 'com_contact.category', 'com_content.category', 'com_newsfeeds.category', 'com_users.category',
         'com_categories.categories', 'com_banners.categories', 'com_contact.categories', 'com_content.categories', 'com_newsfeeds.categories', 'com_users.categories');
     const CONTENT_CONTEXTS = array('com_content.article', 'com_content.featured', 'com_content.form', 'com_banner.banner', 'com_contact.contact', 'com_newsfeeds.newsfeed', 'com_content');
@@ -1517,7 +1524,10 @@ class plgSystemLSCache extends CMSPlugin {
                 return;
             }
 
-            $tags = $app->input->get('tags');
+            // Filtre base64 et non « cmd », le filtre par defaut : ce dernier supprime
+            // « + », « / » et « = », que base64 produit des que la liste de tags s'y prete,
+            // et la liste decodee aurait alors perdu des tags sans que rien ne le signale.
+            $tags = $app->input->get('tags', '', 'base64');
             if (!empty($tags)) {
                 $purgeTags = base64_decode($tags);
                 $this->lscInstance->purgePublic($purgeTags);
@@ -2042,25 +2052,10 @@ class plgSystemLSCache extends CMSPlugin {
         $firstFailure = null;
         foreach ($rawList as $path) {
             try {
-                // xhtml=false → pas d'encodage des & en &amp; (crucial pour curl)
-                $routed = Route::link('site', $path, false);
-                if (strpos($routed, '/component') === 0) {
-                    $routed = '/' . $path;
-                }
-                // Quand sef_rewrite est actif, la regle du routeur qui retire « index.php/ »
-                // du chemin n'est pas toujours attachee hors requete web. Ce prefixe est alors
-                // de trop : la page est servie sur l'URL propre, et rechauffer /index.php/x ne
-                // met pas /x en cache. En requete web le routeur l'a deja retire, sans effet.
-                if ($this->app->get('sef_rewrite')) {
-                    $routed = preg_replace('#^(/?)index\.php/#', '$1', $routed);
-                }
-                if ((strpos($routed, '[') !== false) && (strpos($routed, ']') !== false)) {
-                    $pos = strpos($routed, '?');
-                    if ($pos === false) {
-                        $failedBucket++;
-                        continue;
-                    }
-                    $routed = substr($routed, 0, $pos);
+                $routed = $this->routeCrawlPath($path);
+                if ($routed === null) {
+                    $failedBucket++;
+                    continue;
                 }
                 $crawlList[] = $routed;
             } catch (\Throwable $e) {
@@ -2086,6 +2081,39 @@ class plgSystemLSCache extends CMSPlugin {
             'failedBucket' => $failedBucket,
             'firstFailure' => $firstFailure,
         );
+    }
+
+    /**
+     * Route une entrée de la liste de crawl vers le chemin à demander au serveur.
+     *
+     * Partagé par la reconstruction et par --purge-changed : une page réchauffée sous un
+     * autre chemin que celui des visiteurs n'est pas celle qu'ils demandent.
+     *
+     * @return  string|null  null si l'URL routée garde des crochets sans query à couper.
+     *
+     * @throws  \Throwable   si le routeur échoue - à l'appelant de compter l'échec.
+     */
+    private function routeCrawlPath($path) {
+        // xhtml=false → pas d'encodage des & en &amp; (crucial pour curl)
+        $routed = Route::link('site', $path, false);
+        if (strpos($routed, '/component') === 0) {
+            $routed = '/' . $path;
+        }
+        // Quand sef_rewrite est actif, la regle du routeur qui retire « index.php/ »
+        // du chemin n'est pas toujours attachee hors requete web. Ce prefixe est alors
+        // de trop : la page est servie sur l'URL propre, et rechauffer /index.php/x ne
+        // met pas /x en cache. En requete web le routeur l'a deja retire, sans effet.
+        if ($this->app->get('sef_rewrite')) {
+            $routed = preg_replace('#^(/?)index\.php/#', '$1', $routed);
+        }
+        if ((strpos($routed, '[') !== false) && (strpos($routed, ']') !== false)) {
+            $pos = strpos($routed, '?');
+            if ($pos === false) {
+                return null;
+            }
+            $routed = substr($routed, 0, $pos);
+        }
+        return $routed;
     }
 
     /**
@@ -2276,6 +2304,234 @@ class plgSystemLSCache extends CMSPlugin {
         $json['agent']       = $userAgent;
 
         return $json;
+    }
+
+    /**
+     * Purge et réchauffe les pages des produits dont l'affichage a changé depuis le
+     * passage précédent - voir --purge-changed dans cli/rebuild.php.
+     *
+     * Les imports CSVI (Rocsvi) écrivent le stock en SQL sans déclencher le moindre
+     * événement VirtueMart : LSCache n'en est jamais informé, et une fiche ou une liste de
+     * catégorie en cache garde « Ajouter au panier » sur un produit épuisé - ou « Tenez-moi
+     * au courant » sur un produit revenu - jusqu'à l'expiration de la page.
+     *
+     * La date de modification ne peut pas servir de détecteur : CSVI la réécrit sur chaque
+     * ligne du flux, que le stock ait bougé ou non (availabilityproduct.php), et filtrer
+     * dessus purgerait tout le catalogue du fournisseur à chaque import. On compare donc
+     * ce que les pages affichent d'un passage à l'autre, ce qui rend aussi le passage
+     * indifférent au fuseau du cron comme à l'outil qui a modifié la base.
+     *
+     * La purge passe par le point d'entrée HTTP cleanCache : LiteSpeed n'obéit qu'à un
+     * en-tête X-LiteSpeed-Purge porté par une réponse qu'il sert, et le CLI n'en sert aucune.
+     */
+    public function onLSCachePurgeChangedCli($dryRun = false) {
+        if (PHP_SAPI !== 'cli') {
+            return array('status' => 'error', 'error' => 'onLSCachePurgeChangedCli is CLI only');
+        }
+
+        if (!$this->cacheEnabled) {
+            return array('status' => 'error', 'error' => Text::_('COM_LSCACHE_PLUGIN_TURNONFIRST'));
+        }
+
+        if (!function_exists('curl_version')) {
+            return array('status' => 'error', 'error' => Text::_('COM_LSCACHE_PLUGIN_CURLNOTSUPPORT'));
+        }
+
+        $vm = $this->componentHelper->getInstance('com_virtuemart');
+        if (($vm === null) || (!method_exists($vm, 'getStockFingerprints'))) {
+            return array('status' => 'error', 'error' => 'Integration VirtueMart indisponible : rien a comparer.');
+        }
+
+        // Deux passages simultanés - un cron qui repasse pendant un réchauffage long -
+        // compareraient au même instantané et purgeraient deux fois les mêmes pages.
+        $snapshotFile = $this->getStockSnapshotFile();
+        $lock = @fopen($snapshotFile . '.lock', 'c');
+        if ($lock === false) {
+            return array('status' => 'error', 'error' => 'Verrou impossible a creer dans ' . dirname($snapshotFile));
+        }
+        if (!flock($lock, LOCK_EX | LOCK_NB)) {
+            fclose($lock);
+            return array('status' => 'busy');
+        }
+
+        try {
+            return $this->purgeChangedProducts($vm, $snapshotFile, (bool) $dryRun);
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
+    }
+
+    private function purgeChangedProducts($vm, $snapshotFile, $dryRun) {
+        $started = time();
+        $current = $vm->getStockFingerprints();
+
+        // Une lecture vide n'est jamais un catalogue vide : l'enregistrer comme référence
+        // ferait voir, au passage suivant, tous les produits comme nouveaux - donc purgés.
+        if (empty($current['fp'])) {
+            return array('status' => 'error', 'error' => 'Aucun produit lu dans #__virtuemart_products.');
+        }
+
+        $raw      = @file_get_contents($snapshotFile);
+        $previous = is_string($raw) ? json_decode($raw, true) : null;
+        if ((!is_array($previous)) || (($previous['v'] ?? 0) !== self::STOCK_SNAPSHOT_VERSION)
+            || (!is_array($previous['fp'] ?? null))) {
+            // Premier passage, ou format changé : rien à quoi comparer. Tout déclarer
+            // modifié purgerait le catalogue entier ; on se contente de poser la référence.
+            if ((!$dryRun) && (!$this->writeStockSnapshot($snapshotFile, $current['fp']))) {
+                return array('status' => 'error', 'error' => 'Instantane impossible a ecrire : ' . $snapshotFile);
+            }
+            return array('status' => 'baseline', 'products' => count($current['fp']), 'dryRun' => $dryRun);
+        }
+
+        $old     = $previous['fp'];
+        $changed = array();
+        foreach ($current['fp'] as $pid => $fp) {
+            if ((!isset($old[$pid])) || ($old[$pid] !== $fp)) {
+                $changed[(int) $pid] = true;
+            }
+        }
+        // Un produit supprimé : sa fiche en cache doit disparaître elle aussi.
+        foreach ($old as $pid => $fp) {
+            if (!isset($current['fp'][$pid])) {
+                $changed[(int) $pid] = true;
+            }
+        }
+        // La disponibilité affichée d'un parent peut dépendre de ses déclinaisons
+        // (stockhandle disableit_children, étiquette « vendu » des gabarits).
+        foreach (array_keys($changed) as $pid) {
+            if (isset($current['parent'][$pid])) {
+                $changed[$current['parent'][$pid]] = true;
+            }
+        }
+
+        if (empty($changed)) {
+            return array('status' => 'unchanged', 'products' => count($current['fp']));
+        }
+
+        $productIds = array_keys($changed);
+        $refresh    = $vm->getProductRefresh($productIds);
+
+        $urls     = array();
+        $unrouted = 0;
+        foreach ($refresh['urls'] as $path) {
+            try {
+                $routed = $this->routeCrawlPath($path);
+            } catch (\Throwable $e) {
+                $routed = null;
+            }
+            if ($routed === null) {
+                $unrouted++;
+                continue;
+            }
+            $urls[] = $routed;
+        }
+        $urls = array_values(array_unique($urls));
+
+        $result = array(
+            'products'   => count($productIds),
+            'productIds' => array_slice($productIds, 0, 20),
+            'tags'       => count($refresh['tags']),
+            'urls'       => $urls,
+            'unrouted'   => $unrouted,
+        );
+
+        if ($dryRun) {
+            $result['status'] = 'dry-run';
+            return $result;
+        }
+
+        $purge = $this->purgeTagsOverHttp($refresh['tags']);
+        $result['requests'] = $purge['requests'];
+        if ($purge['error'] !== null) {
+            // Instantané laissé tel quel : le passage suivant retentera les mêmes produits.
+            $result['status'] = 'error';
+            $result['error']  = $purge['error'];
+            return $result;
+        }
+
+        // Enregistré avant le réchauffage : les pages sont purgées quoi qu'il arrive
+        // ensuite, et un réchauffage interrompu ne doit pas les faire repurger.
+        if (!$this->writeStockSnapshot($snapshotFile, $current['fp'])) {
+            $result['status'] = 'error';
+            $result['error']  = 'Pages purgees, mais instantane impossible a ecrire (' . $snapshotFile
+                              . ') : les memes produits seront purges a chaque passage.';
+            return $result;
+        }
+
+        usleep(100000);
+        $this->crawlUrls($urls, false, true, false, false);
+
+        $result['status']  = 'purged';
+        $result['seconds'] = time() - $started;
+        return $result;
+    }
+
+    /**
+     * Purge une liste de tags par le point d'entrée HTTP cleanCache, par lots.
+     *
+     * Chaque lot est encodé en base64 PUIS pour l'URL : sans rawurlencode(), un « + »
+     * produit par base64 arrive en espace une fois la query décodée.
+     *
+     * @return  array  ['requests' => int, 'error' => string|null]
+     */
+    private function purgeTagsOverHttp(array $tags) {
+        $endpoint = Uri::root() . 'index.php?option=com_lscache&cleanCache='
+                  . rawurlencode((string) $this->settings->get('cleanCache', 'purgeAllCache'));
+
+        $requests = 0;
+        foreach (array_chunk(array_values(array_unique($tags)), self::PURGE_TAGS_PER_REQUEST) as $batch) {
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL, $endpoint . '&tags=' . rawurlencode(base64_encode(implode(',', $batch))));
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+            // Même agent que le crawl, déjà admis par le pare-feu applicatif du site.
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (compatible; lscache_runner)');
+            curl_exec($ch);
+            $code    = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $failure = curl_error($ch);
+            $requests++;
+
+            if (!in_array($code, array(200, 201), true)) {
+                $error = sprintf('Purge refusee par le site (HTTP %d, lot %d)', $code, $requests);
+                if ($code === 0 && $failure !== '') {
+                    $error .= ' : ' . $failure;
+                } else if ($code === 403) {
+                    $error .= ' - verifiez les IP autorisees dans les reglages LSCache';
+                }
+                return array('requests' => $requests, 'error' => $error);
+            }
+        }
+
+        return array('requests' => $requests, 'error' => null);
+    }
+
+    /**
+     * Emplacement de l'instantané de --purge-changed (mêmes contraintes que le fichier
+     * de suivi : tmp_path, pas /cache, que le vidage du cache Joomla effacerait).
+     */
+    private function getStockSnapshotFile() {
+        $tmp = (string) $this->app->get('tmp_path');
+        if (($tmp === '') || (!is_dir($tmp)) || (!is_writable($tmp))) {
+            $tmp = JPATH_ROOT . '/tmp';
+        }
+        return rtrim($tmp, '/\\') . '/lscache_stock_snapshot.json';
+    }
+
+    /**
+     * Écrit l'instantané via un fichier temporaire renommé : une écriture interrompue
+     * laisserait sinon un JSON tronqué, lu au passage suivant comme « aucun instantané » -
+     * la référence serait reposée sans purger ce qui avait changé entre-temps.
+     */
+    private function writeStockSnapshot($file, array $fingerprints) {
+        $json = json_encode(array('v' => self::STOCK_SNAPSHOT_VERSION, 'taken' => time(), 'fp' => $fingerprints));
+        if (($json === false) || (@file_put_contents($file . '.tmp', $json) === false)) {
+            return false;
+        }
+        return @rename($file . '.tmp', $file);
     }
 
     public function onLSCacheRebuildAll() {

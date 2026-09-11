@@ -47,6 +47,9 @@ class plgSystemLSCache extends CMSPlugin {
     // Tags par requete de purge HTTP : garde l'en-tete X-LiteSpeed-Purge qui en resulte
     // bien en deca des limites de taille d'en-tete du serveur.
     const PURGE_TAGS_PER_REQUEST = 50;
+    // Plafond de la file de rechauffage des commandes : sans cron --purge-changed pour
+    // la vider, elle ne doit pas grossir indefiniment.
+    const REWARM_QUEUE_MAX = 2000;
     const CATEGORY_CONTEXTS = array('com_categories.category', 'com_banners.category', 'com_contact.category', 'com_content.category', 'com_newsfeeds.category', 'com_users.category',
         'com_categories.categories', 'com_banners.categories', 'com_contact.categories', 'com_content.categories', 'com_newsfeeds.categories', 'com_users.categories');
     const CONTENT_CONTEXTS = array('com_content.article', 'com_content.featured', 'com_content.form', 'com_banner.banner', 'com_contact.contact', 'com_contact.form', 'com_newsfeeds.newsfeed', 'com_content');
@@ -2471,8 +2474,15 @@ class plgSystemLSCache extends CMSPlugin {
             return array('status' => 'busy');
         }
 
+        $started = time();
         try {
-            return $this->purgeChangedProducts($vm, $snapshotFile, (bool) $dryRun);
+            $result = $this->purgeChangedProducts($vm, $snapshotFile, (bool) $dryRun);
+            // Une purge refusee laisse la file intacte : le passage suivant la reprendra.
+            if ($result['status'] !== 'error') {
+                $result = $this->rewarm($result, (bool) $dryRun);
+            }
+            $result['seconds'] = time() - $started;
+            return $result;
         } finally {
             flock($lock, LOCK_UN);
             fclose($lock);
@@ -2480,7 +2490,6 @@ class plgSystemLSCache extends CMSPlugin {
     }
 
     private function purgeChangedProducts($vm, $snapshotFile, $dryRun) {
-        $started = time();
         $current = $vm->getStockFingerprints();
 
         // Une lecture vide n'est jamais un catalogue vide : l'enregistrer comme référence
@@ -2576,12 +2585,129 @@ class plgSystemLSCache extends CMSPlugin {
             return $result;
         }
 
-        usleep(100000);
-        $this->crawlUrls($urls, false, true, false, false);
-
-        $result['status']  = 'purged';
-        $result['seconds'] = time() - $started;
+        // Le réchauffage vient ensuite, dans rewarm(), en une seule passe avec les pages
+        // que les commandes ont mises en file.
+        $result['status'] = 'purged';
         return $result;
+    }
+
+    /**
+     * Réchauffe en une seule passe les pages purgées par --purge-changed et celles que
+     * les commandes confirmées ont mises en file (purgeDeferred()).
+     */
+    private function rewarm(array $result, $dryRun) {
+        $queued = $this->takeRewarmQueue(!$dryRun);
+        $routed = array();
+        foreach ($queued as $path) {
+            try {
+                $r = $this->routeCrawlPath($path);
+            } catch (\Throwable $e) {
+                $r = null;
+            }
+            if ($r !== null) {
+                $routed[] = $r;
+            }
+        }
+
+        $result['queued'] = count($queued);
+        $result['urls']   = array_values(array_unique(array_merge($result['urls'] ?? array(), $routed)));
+
+        if ((!$dryRun) && (!empty($result['urls']))) {
+            usleep(100000);
+            $this->crawlUrls($result['urls'], false, true, false, false);
+        }
+        return $result;
+    }
+
+    /**
+     * Purge par en-tête les tags accumulés, sans appel HTTP ni réchauffage dans la requête
+     * en cours ; les URLs vont dans la file que --purge-changed réchauffe à son passage.
+     *
+     * Destinée aux purges déclenchées dans le parcours d'un client (confirmation de
+     * commande). purgeAction() y appelait le site lui-même en HTTP, sans délai maximal,
+     * puis réchauffait les pages dans la même requête : autant d'attente pour le client.
+     * Sur MGF cet appel partait de plus sans agent et le pare-feu du site le refusait
+     * (403) - seule la purge par en-tête, faite ici directement, avait donc lieu.
+     */
+    public function purgeDeferred(array $urls) {
+        if (count($this->purgeObject->tags) < 1) {
+            return;
+        }
+        $serveStale = $this->settings->get('serveStale', 1);
+        $this->lscInstance->purgePublic(implode(',', $this->purgeObject->tags), $serveStale);
+        $this->log();
+        if ($this->purgeObject->autoRecache > 0) {
+            $this->queueRewarm($urls);
+        }
+    }
+
+    /**
+     * Ajoute des URLs à la file de réchauffage sans jamais faire attendre la requête : si
+     * la file est verrouillée, quelques essais de 20 ms puis abandon. Une page non
+     * réchauffée sera générée à la visite suivante ; une attente, elle, retarderait la
+     * confirmation de commande du client.
+     */
+    private function queueRewarm(array $urls) {
+        $urls = array_values(array_filter($urls, 'is_string'));
+        if (empty($urls)) {
+            return;
+        }
+        $fh = @fopen($this->getRewarmQueueFile(), 'c+');
+        if ($fh === false) {
+            return;
+        }
+        // Cinq essais, quatre pauses : 80 ms d'attente au plus.
+        $locked = flock($fh, LOCK_EX | LOCK_NB);
+        for ($i = 0; ($i < 4) && (!$locked); $i++) {
+            usleep(20000);
+            $locked = flock($fh, LOCK_EX | LOCK_NB);
+        }
+        if ($locked) {
+            $queue = json_decode((string) stream_get_contents($fh), true);
+            $queue = is_array($queue) ? $queue : array();
+            $queue = array_slice(array_values(array_unique(array_merge($queue, $urls))), -self::REWARM_QUEUE_MAX);
+            ftruncate($fh, 0);
+            rewind($fh);
+            fwrite($fh, json_encode($queue));
+            fflush($fh);
+            flock($fh, LOCK_UN);
+        }
+        fclose($fh);
+    }
+
+    /**
+     * Lit la file de réchauffage, et la vide si $consume. Le verrou n'est tenu que le
+     * temps de lire et vider, jamais pendant le crawl : une confirmation de commande qui
+     * voudrait y ajouter ses pages n'attend pas.
+     */
+    private function takeRewarmQueue($consume) {
+        $file = $this->getRewarmQueueFile();
+        if (!is_file($file)) {
+            return array();
+        }
+        $fh = @fopen($file, 'c+');
+        if ($fh === false) {
+            return array();
+        }
+        $queue = null;
+        if (flock($fh, LOCK_EX)) {
+            $queue = json_decode((string) stream_get_contents($fh), true);
+            if ($consume) {
+                ftruncate($fh, 0);
+                fflush($fh);
+            }
+            flock($fh, LOCK_UN);
+        }
+        fclose($fh);
+        return is_array($queue) ? array_values(array_filter($queue, 'is_string')) : array();
+    }
+
+    private function getRewarmQueueFile() {
+        $tmp = (string) $this->app->get('tmp_path');
+        if (($tmp === '') || (!is_dir($tmp)) || (!is_writable($tmp))) {
+            $tmp = JPATH_ROOT . '/tmp';
+        }
+        return rtrim($tmp, '/\\') . '/lscache_rewarm_queue.json';
     }
 
     /**

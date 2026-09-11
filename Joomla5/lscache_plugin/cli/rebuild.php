@@ -49,7 +49,9 @@
  *                             l'état de référence. Combinable avec --dry-run (montre ce qui
  *                             serait purgé, sans rien toucher) et --list. Un passage qui
  *                             trouve le précédent encore en cours s'arrête sans erreur
- *                             (code 0) : le suivant rattrapera.
+ *                             (code 0) : le suivant rattrapera. Réchauffe aussi, dans la
+ *                             même passe, les pages que les commandes confirmées ont
+ *                             purgées et mises en file.
  *   --limit=N                 Ne traite que les N premières URLs (test de fumée).
  *   --quiet                   N'affiche que les erreurs. À utiliser en cron.
  *   --help                    Affiche cette aide.
@@ -286,6 +288,13 @@ if ($purgeChanged) {
         return '  produits : ' . implode(', ', $result['productIds'])
              . ((int) $result['products'] > count($result['productIds']) ? ', ...' : '');
     };
+    // Pages purgees par les commandes confirmees depuis le passage precedent.
+    $queueNote = function ($result) use ($dryRun) {
+        if (!empty($result['queued'])) {
+            lsc_out('  file des commandes : ' . (int) $result['queued'] . ' page(s) '
+                  . ($dryRun ? 'en attente de rechauffage' : 'rechauffee(s)'));
+        }
+    };
 
     switch ($result['status']) {
         case 'baseline':
@@ -294,10 +303,12 @@ if ($purgeChanged) {
                   . ' produit(s), sans rien purger.'
                 : 'Instantane initial : ' . (int) $result['products'] . ' produit(s) enregistre(s). Rien a'
                   . ' comparer donc rien de purge - les passages suivants purgeront les changements.');
+            $queueNote($result);
             exit(0);
 
         case 'unchanged':
             lsc_out('Aucun changement d\'affichage sur ' . (int) $result['products'] . ' produit(s).');
+            $queueNote($result);
             exit(0);
 
         case 'busy':
@@ -326,7 +337,8 @@ if ($purgeChanged) {
             if (count($result['urls']) > 20) {
                 lsc_out('  ... et ' . (count($result['urls']) - 20) . ' autres.');
             }
-            lsc_out('Rien n\'a ete purge et l\'instantane n\'a pas bouge.');
+            $queueNote($result);
+            lsc_out('Rien n\'a ete purge ni rechauffe ; l\'instantane et la file n\'ont pas bouge.');
             exit(0);
 
         case 'purged':
@@ -335,6 +347,7 @@ if ($purgeChanged) {
                 (int) $result['products'], (int) $result['tags'], (int) $result['requests'],
                 count($result['urls']), (int) $result['seconds']));
             lsc_out($productList($result));
+            $queueNote($result);
             exit(0);
 
         default:

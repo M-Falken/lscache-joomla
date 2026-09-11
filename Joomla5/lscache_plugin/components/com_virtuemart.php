@@ -203,29 +203,22 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
             $cart = $cart->getArgument('0');
         }
 
-        $tag = "com_virtuemart";
-        $productids = array();
-        $productUrls = array();
-        
-        foreach ($cart->products as $product) {
-            $productids[] = $product->virtuemart_product_id;
-            $productUrls[] = 'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $product->virtuemart_product_id .'&virtuemart_category_id=0';
+        // Appele au coeur de la confirmation de commande : rien ici ne doit pouvoir
+        // l'interrompre ni la ralentir. Aucun appel HTTP ni rechauffage dans la requete
+        // du client (voir purgeDeferred() du plugin), et toute erreur est avalee : au
+        // pire les pages restent en cache jusqu'a leur expiration.
+        try {
+            $productids = array();
+            if (isset($cart->products) && (is_array($cart->products) || ($cart->products instanceof \Traversable))) {
+                foreach ($cart->products as $product) {
+                    if (is_object($product) && !empty($product->virtuemart_product_id)) {
+                        $productids[] = (int) $product->virtuemart_product_id;
+                    }
+                }
+            }
+            $this->purgeOrderedProducts($productids);
+        } catch (\Throwable $e) {
         }
-        
-        if(empty($productids)){
-            return;
-        }
-        
-        $category_tag = $this->getProductCategoryTags($productids);
-        $tag .= $category_tag;
-        $this->plugin->purgeObject->tags[] = $tag;
-        if($this->plugin->purgeObject->autoRecache==0){
-            $this->plugin->purgeAction();
-            return;
-        }
-        $urls = $this->getProductCategoryUrls($productids);
-        $this->plugin->purgeObject->urls = array_merge($urls, $productUrls);
-        $this->plugin->purgeAction();
     }
 
     public function plgVmOnUpdateOrderShipment($order, $old_order_status=null, $inputOrder=null)
@@ -270,38 +263,59 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
 
     private function purgeOrderProductCache($orderId)
     {
-        $db = Factory::getDbo();
-        $query = $db->createQuery()
-            ->select($db->quoteName('virtuemart_product_id'))
-            ->from($db->quoteName('#__virtuemart_order_items'))
-            ->where($db->quoteName('virtuemart_order_id') . ' = ' . $orderId);
-        $db->setQuery($query);
-        $productIds = $db->loadColumn();
+        // Changement de statut d'une commande dans l'admin : meme regle que la
+        // confirmation, une erreur de purge ne doit jamais bloquer la gestion des commandes.
+        try {
+            $db = Factory::getDbo();
+            $query = $db->createQuery()
+                ->select($db->quoteName('virtuemart_product_id'))
+                ->from($db->quoteName('#__virtuemart_order_items'))
+                ->where($db->quoteName('virtuemart_order_id') . ' = ' . (int) $orderId);
+            $db->setQuery($query);
+            $this->purgeOrderedProducts((array) $db->loadColumn());
+        } catch (\Throwable $e) {
+        }
+    }
 
+    /**
+     * Purge les pages des produits d'une commande, sans rien rechauffer dans la requete
+     * en cours : les URLs partent dans la file du prochain --purge-changed.
+     *
+     * La fiche du produit est desormais purgee aussi. Avant, seules les listes de ses
+     * categories l'etaient, et une fiche dont la commande avait epuise le stock gardait
+     * « Ajouter au panier » jusqu'a son expiration. Les URLs a rechauffer sont celles de
+     * getProductRefresh(), sous l'Itemid herite, comme la reconstruction de nuit - et non
+     * plus des variantes sans Itemid que personne ne visite.
+     */
+    private function purgeOrderedProducts(array $productIds)
+    {
+        $productIds = array_values(array_unique(array_filter(array_map('intval', $productIds))));
         if (empty($productIds)) {
             return;
         }
 
-        $productIds = array_map('intval', array_unique($productIds));
+        // Une declinaison n'a en general pas de categorie propre : c'est son parent qui
+        // figure dans les listes, et dont la disponibilite affichee peut changer.
+        $productIds = array_values(array_unique(array_merge($productIds, $this->getParentIds($productIds))));
 
-        $tag = "com_virtuemart";
-        $productUrls = [];
-        foreach ($productIds as $pid) {
-            $tag .= ", com_virtuemart.product:" . $pid;
-            $productUrls[] = 'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $pid . '&virtuemart_category_id=0';
-        }
-        $tag .= $this->getProductCategoryTags($productIds);
+        $refresh = $this->getProductRefresh($productIds);
 
-        $this->plugin->purgeObject->tags[] = $tag;
+        // « com_virtuemart » : pages VirtueMart sans contexte propre (accueil boutique,
+        // fabricants...), qui peuvent lister le produit. Deja purgees avant ce changement.
+        $this->plugin->purgeObject->tags[] = implode(',', array_merge(array('com_virtuemart'), $refresh['tags']));
+        $this->plugin->purgeDeferred($refresh['urls']);
+    }
 
-        if ($this->plugin->purgeObject->autoRecache == 0) {
-            $this->plugin->purgeAction();
-            return;
-        }
-
-        $categoryUrls = $this->getProductCategoryUrls($productIds);
-        $this->plugin->purgeObject->urls = array_merge($categoryUrls, $productUrls);
-        $this->plugin->purgeAction();
+    private function getParentIds(array $productIds)
+    {
+        $db = Factory::getDbo();
+        $query = $db->createQuery()
+                ->select($db->quoteName('product_parent_id'))
+                ->from('#__virtuemart_products')
+                ->where($db->quoteName('virtuemart_product_id') . ' IN (' . implode(',', array_map('intval', $productIds)) . ')')
+                ->where($db->quoteName('product_parent_id') . ' > 0');
+        $db->setQuery($query);
+        return array_map('intval', (array) $db->loadColumn());
     }
 
     /**

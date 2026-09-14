@@ -36,6 +36,11 @@ class LSCacheVaryDiagnostic
      */
     const PURGE_MIN_SAMPLE = 4;
 
+    // Purges automatiques espacees de moins de 15 min : un seul evenement pour la moyenne.
+    // Un meme declencheur (nettoyage JSpeed relance sur deux pages visitees coup sur coup)
+    // en produit souvent plusieurs en rafale.
+    const PURGE_GROUP_SECONDS = 900;
+
     /**
      * Assemble l'état complet à afficher.
      *
@@ -544,7 +549,9 @@ class LSCacheVaryDiagnostic
         }
 
         $dates     = array();
+        $siteDates = array();
         $entries   = array();
+        $siteExtra = array();
         $siteCount = 0;
 
         foreach ($histo as $e) {
@@ -553,26 +560,36 @@ class LSCacheVaryDiagnostic
             }
 
             $dates[] = (int) $e['purged'];
+            $client  = (string) ($e['client'] ?? '');
+            $detail  = trim(((string) ($e['option'] ?? '')) . ' ' . ((string) ($e['task'] ?? '')));
 
-            if (($e['client'] ?? '') === 'site') {
-                $siteCount++;
+            if ($detail === '') {
+                $detail = (string) ($e['uri'] ?? '');
             }
 
+            $entry = array(
+                'time'   => (int) $e['purged'],
+                'origin' => in_array($client, array('site', 'administrator', 'cli'), true) ? $client : 'cli',
+                'detail' => $detail,
+            );
+
+            if ($client === 'site') {
+                $siteCount++;
+                $siteDates[] = (int) $e['purged'];
+            }
+
+            // Les cinq plus recentes, puis jusqu'a trois purges automatiques plus anciennes :
+            // sans elles, une serie de purges manuelles pousse hors de la liste celles que
+            // l'alerte denonce (Emaging, 14/09/2026 : alerte sur 4 purges depuis une page
+            // publique, liste ne montrant que des purges de l'administration).
             if (count($entries) < 5) {
-                $client = (string) ($e['client'] ?? '');
-                $detail = trim(((string) ($e['option'] ?? '')) . ' ' . ((string) ($e['task'] ?? '')));
-
-                if ($detail === '') {
-                    $detail = (string) ($e['uri'] ?? '');
-                }
-
-                $entries[] = array(
-                    'time'   => (int) $e['purged'],
-                    'origin' => in_array($client, array('site', 'administrator', 'cli'), true) ? $client : 'cli',
-                    'detail' => $detail,
-                );
+                $entries[] = $entry;
+            } else if (($client === 'site') && (count($siteExtra) < 3)) {
+                $siteExtra[] = $entry;
             }
         }
+
+        $entries = array_merge($entries, $siteExtra);
 
         if (empty($dates)) {
             return $vide;
@@ -582,15 +599,26 @@ class LSCacheVaryDiagnostic
         $seuil   = time() - 86400;
         $last24h = count(array_filter($dates, function ($d) use ($seuil) { return $d > $seuil; }));
 
-        // Moyenne sur les ecarts reellement observes, et non sur une fenetre fixe :
-        // l'historique est plafonne a 20 entrees et peut couvrir quelques heures comme
-        // plusieurs jours selon le rythme des purges.
+        // Moyenne sur les seules purges AUTOMATIQUES, declenchees depuis une page publique.
+        // Une purge de l'administration est une decision humaine ponctuelle : melangees au
+        // calcul, huit purges manuelles en une demi-heure faisaient annoncer « une purge
+        // toutes les 3,4 h » sur Emaging (14/09/2026), ou JSpeed ne purgeait qu'une fois
+        // par jour. Des purges automatiques rapprochees comptent pour un seul evenement.
         //
-        // En dessous de quatre points elle n'est pas affichee : deux purges manuelles
-        // espacees de trois minutes donnaient « une purge toutes les 0,1 h », un chiffre
-        // juste et depourvu de sens, qui desinforme plus qu'il n'informe.
-        $interval = (count($dates) >= self::PURGE_MIN_SAMPLE)
-            ? (int) round(($dates[0] - $dates[count($dates) - 1]) / (count($dates) - 1))
+        // Ecarts reellement observes, et non fenetre fixe : l'historique est plafonne a
+        // 20 entrees. En dessous de quatre evenements rien n'est affiche - deux points
+        // proches donnent un chiffre juste et depourvu de sens.
+        rsort($siteDates);
+        $events = array();
+
+        foreach ($siteDates as $d) {
+            if (empty($events) || ((end($events) - $d) > self::PURGE_GROUP_SECONDS)) {
+                $events[] = $d;
+            }
+        }
+
+        $interval = (count($events) >= self::PURGE_MIN_SAMPLE)
+            ? (int) round(($events[0] - $events[count($events) - 1]) / (count($events) - 1))
             : null;
 
         // Cout d'une purge : la duree d'une reconstruction a froid, soit la plus longue des

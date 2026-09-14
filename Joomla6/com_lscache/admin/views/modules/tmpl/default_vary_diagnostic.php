@@ -171,9 +171,9 @@ $badge      = $stateClass[$coverage['state']] ?? 'secondary';
             <?php if ($purges['alert']) : ?>
                 <p class="text-danger mb-0">
                     <?php echo Text::sprintf('COM_LSCACHE_VARY_DIAG_PURGES_ALERT', (int) $purges['siteCount']); ?>
-                    <?php if ($purges['rebuild'] !== null) : ?>
+                    <?php if (!empty($purges['rebuild'])) : ?>
                         <?php echo ' ' . Text::sprintf('COM_LSCACHE_VARY_DIAG_PURGES_COST',
-                            (int) round($purges['rebuild'] / 60)); ?>
+                            LSCacheVaryDiagnostic::formatDuration($purges['rebuild'])); ?>
                     <?php endif; ?>
                 </p>
             <?php endif; ?>

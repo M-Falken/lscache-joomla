@@ -465,6 +465,25 @@ class LSCacheVaryDiagnostic
      * @return  int|null  null si aucune purge n'a été enregistrée.
      */
     /**
+     * Duree lisible : secondes sous la minute, minutes et secondes au-dela.
+     *
+     * L'arrondi a la minute affichait « une reconstruction de 0 minutes » sur tout site
+     * dont la reconstruction dure moins de 30 s (Emaging : 275 pages).
+     */
+    public static function formatDuration($seconds)
+    {
+        $seconds = max(0, (int) $seconds);
+
+        if ($seconds < 60) {
+            return $seconds . ' s';
+        }
+
+        $rest = $seconds % 60;
+
+        return intdiv($seconds, 60) . ' min' . ($rest ? sprintf(' %02d s', $rest) : '');
+    }
+
+    /**
      * Emplacement d'un fichier d'etat du plugin : le tmp_path configure, et non /cache,
      * ce dernier etant vide regulierement.
      */
@@ -574,7 +593,11 @@ class LSCacheVaryDiagnostic
             ? (int) round(($dates[0] - $dates[count($dates) - 1]) / (count($dates) - 1))
             : null;
 
-        // Duree de la derniere reconstruction menee a son terme.
+        // Cout d'une purge : la duree d'une reconstruction a froid, soit la plus longue des
+        // passes terminees de l'historique. La derniere passe ne convient pas : sur un cache
+        // deja chaud elle n'enchaine que des hits (Emaging, 14/09/2026 : passe « Cookies
+        // refuses » de 1 s, annoncee comme le cout d'une purge qui oblige pourtant a tout
+        // regenerer).
         $rebuild = null;
         $hist    = self::readHistory();
 
@@ -582,8 +605,7 @@ class LSCacheVaryDiagnostic
             foreach ($hist as $e) {
                 if (is_array($e) && (($e['status'] ?? '') === 'completed')
                     && !empty($e['finished']) && !empty($e['started'])) {
-                    $rebuild = (int) $e['finished'] - (int) $e['started'];
-                    break;
+                    $rebuild = max((int) $rebuild, (int) $e['finished'] - (int) $e['started']);
                 }
             }
         }

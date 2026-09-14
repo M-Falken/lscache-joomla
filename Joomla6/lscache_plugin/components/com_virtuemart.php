@@ -406,22 +406,44 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
 
     public function getTags($option, $pageElements)
     {
-        if (isset($pageElements["context"])) {
-            $context = $pageElements["context"];
-        } else {
-            $context = $option;
+        // Vue et identifiants lus dans la requete routee, et non dans le contenu capte par
+        // onContentPrepare. Cette capture ne tient pas pour VirtueMart : une liste de
+        // categorie declenche d'abord onContentPrepare pour chaque produit (contexte
+        // com_virtuemart.product), puis pour la description de la categorie, et tout module
+        // rendu ensuite remplace le contenu retenu. Mesure sur MGF le 14/09/2026 : la page
+        // de la categorie 389 ne portait pas son tag - une purge de
+        // com_virtuemart.category:389 la laissait en cache - et n'etait videe que par les
+        // purges generiques « com_virtuemart » de chaque commande, sans jamais etre
+        // rechauffee.
+        $input = Factory::getApplication()->getInput();
+        $view  = $input->getCmd('view', '');
+
+        if ($view === 'productdetails') {
+            $pid = $this->firstInt($input->get('virtuemart_product_id', 0, 'raw'));
+            if ($pid > 0) {
+                return 'com_virtuemart.product:' . $pid;
+            }
+        } else if ($view === 'category') {
+            $cid = $this->firstInt($input->get('virtuemart_category_id', 0, 'raw'));
+            if ($cid > 0) {
+                return 'com_virtuemart.category:' . $cid;
+            }
         }
 
-        if ($context == "com_virtuemart.productdetails") {
-            return 'com_virtuemart.product:' . $pageElements['content']->virtuemart_product_id;
-        } else if ($context == "com_virtuemart.category") {
-            if (isset($pageElements["content"]) && !empty($pageElements["content"]->virtuemart_category_id)) {
-                return 'com_virtuemart.category:' . $pageElements["content"]->virtuemart_category_id;
-            }
-            return $option;
-        } else {
-            return $option;
+        // Page sans produit ni categorie propre (accueil boutique, fabricants, recherche) :
+        // tag generique, vide par les purges qui peuvent la concerner.
+        return $option;
+    }
+
+    /**
+     * VirtueMart passe parfois ses identifiants en tableau (virtuemart_product_id[]=).
+     */
+    private function firstInt($value)
+    {
+        if (is_array($value)) {
+            $value = reset($value);
         }
+        return is_scalar($value) ? (int) $value : 0;
     }
 
     private function getProductCategories($productid)

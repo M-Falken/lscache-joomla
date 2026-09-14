@@ -2827,10 +2827,11 @@ class plgSystemLSCache extends CMSPlugin {
      * produisait « https://site.frhttps://site.fr/... ». On la laisse telle quelle.
      */
     private function absoluteCrawlUrl($root, $url) {
+        // Forme encodée, celle des navigateurs : voir browserPath().
         if (preg_match('#^https?://#i', $url)) {
-            return $url;
+            return $this->browserPath($url);
         }
-        return $root . $url;
+        return $root . $this->browserPath($url);
     }
 
     /**
@@ -2886,7 +2887,27 @@ class plgSystemLSCache extends CMSPlugin {
             return null;
         }
 
-        return $parts['path'] . (isset($parts['query']) ? '?' . $parts['query'] : '');
+        return $this->browserPath($parts['path'] . (isset($parts['query']) ? '?' . $parts['query'] : ''));
+    }
+
+    /**
+     * Adresse sous la forme qu'envoie un navigateur : octets non ASCII encodés, séquences
+     * %xx en majuscules. Idempotente.
+     *
+     * Le routeur rend les accents en clair (/consommables/bâtonnets-...), le site répond
+     * par une 301 vers la forme encodée, et c'est encodée que les pages déclarent leur
+     * canonique. Sans cette forme commune, chacune des 428 pages accentuées de MGF coûtait
+     * une redirection à chaque crawl, puis était redemandée une seconde fois, sa canonique
+     * ne ressemblant à aucune adresse déjà demandée.
+     */
+    private function browserPath($path) {
+        $path = preg_replace_callback('/[^\x00-\x7F]/', function ($m) {
+            return rawurlencode($m[0]);
+        }, (string) $path);
+
+        return preg_replace_callback('/%[0-9a-f]{2}/i', function ($m) {
+            return strtoupper($m[0]);
+        }, $path);
     }
 
     private function crawlUrls($urls, $output = true, $preRouted = false, $enforceDuration = true, $trackProgress = false, $cookieHeader = '', $label = '', $userAgent = '') {
@@ -3005,7 +3026,7 @@ class plgSystemLSCache extends CMSPlugin {
         $rootHost    = strtolower((string) parse_url($root, PHP_URL_HOST));
         if ($preRouted) {
             foreach ($queue as $p) {
-                $seen[$p] = true;
+                $seen[$this->browserPath($p)] = true;
             }
         }
 
@@ -3021,6 +3042,7 @@ class plgSystemLSCache extends CMSPlugin {
                     $current++;
                     continue;
                 }
+                $curlurl = $this->browserPath($curlurl);
                 $seen[$curlurl] = true;
 
                 if (($crawlDelay > 0) && ($current > 0)) {

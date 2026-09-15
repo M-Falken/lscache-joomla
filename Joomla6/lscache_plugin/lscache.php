@@ -179,11 +179,11 @@ class plgSystemLSCache extends CMSPlugin {
             $this->pageCachable = false;
             $this->purgeAdmin($option);
         } else {
-            // Évaluer sans écrire. La clé calculée ici est provisoire : les gestionnaires
-            // de consentement peuplent la session pendant le rendu, si bien que la valeur
-            // du routage diffère de la valeur définitive. Émettre les deux plaçait deux
-            // Set-Cookie _lscache_vary contradictoires dans la même réponse. L'écriture
-            // qui fait foi a lieu en fin de requête, dans onAfterRender().
+            // Evaluate without writing. The key computed here is provisional: consent
+            // managers populate the session during render, so the routing-time value
+            // differs from the final one. Writing both produced two contradictory
+            // Set-Cookie _lscache_vary headers in the same response. The authoritative
+            // write happens at the end of the request, in onAfterRender().
             $this->checkVary("", false);
             if($app->input->get("lscache_formtoken")=="1"){
                 $token = Session::getFormToken();
@@ -1595,20 +1595,20 @@ class plgSystemLSCache extends CMSPlugin {
     }
 
     /**
-     * Le visiteur porte-t-il une décision de consentement enregistrée ?
+     * Does the visitor carry a recorded consent decision?
      *
-     * Les noms de cookies viennent de la configuration plutôt que du code : ce plugin
-     * n'a pas à connaître le gestionnaire de consentement installé. Champ vide = on ne
-     * sait pas distinguer un visiteur par défaut d'un visiteur décidé, on fait donc
-     * varier dans tous les cas. L'exactitude du contenu prime sur le taux de hit.
+     * Cookie names come from configuration rather than code: this plugin doesn't need
+     * to know which consent manager is installed. An empty field means we can't tell
+     * a default visitor from a decided one, so it varies in every case. Content
+     * correctness takes priority over hit ratio.
      */
     private function hasConsentDecision() {
         $configured = (string) $this->settings->get('consentCookies', 'cookieconsent_status');
         $names      = array_filter(array_map('trim', explode(',', $configured)), 'strlen');
 
-        // Aucun nom exploitable - champ vide, blancs, virgules seules : on ne sait pas
-        // distinguer un visiteur par défaut d'un visiteur décidé, on fait donc varier dans
-        // tous les cas. L'exactitude du contenu prime sur le taux de hit.
+        // No usable name - empty field, blanks, commas only: we can't tell a default
+        // visitor from a decided one, so it varies in every case. Content correctness
+        // takes priority over hit ratio.
         if (empty($names)) {
             return true;
         }
@@ -1637,13 +1637,13 @@ class plgSystemLSCache extends CMSPlugin {
             return '';
         }
 
-        // Un visiteur qui n'a rien décidé voit la sortie par défaut du site, identique
-        // pour tous : une seule copie partagée est exacte. Faire varier sur cet état
-        // exilait dans un compartiment jamais pré-chauffé toute première visite, le
-        // crawler du rebuild et chaque audit PageSpeed — qui arrivent tous sans cookie
-        // et ne font qu'une seule vue, donc un miss garanti sur une page pourtant
-        // identique à la copie partagée. Seul un visiteur ayant réellement tranché
-        // obtient sa propre variante.
+        // A visitor who hasn't decided anything sees the site's default output,
+        // identical for everyone: one shared copy is accurate. Varying on this state
+        // would exile every first visit into a variant that's never pre-warmed, the
+        // rebuild crawler and every PageSpeed audit included, since they all arrive
+        // cookieless and only ever load a page once, guaranteeing a miss on a page
+        // that's actually identical to the shared copy. Only a visitor who has
+        // actually decided gets their own variant.
         if (!$this->hasConsentDecision()) {
             return '';
         }
@@ -1727,18 +1727,15 @@ class plgSystemLSCache extends CMSPlugin {
     }
 
     /**
+     * Compares the visitor's vary key to the one carried by their cookie, and sets
+     * or clears the cookie if it needs to change.
      *
-     *  set or delete cache vary cookie, if cookie need no change return true;
+     * $writeCookie lets callers evaluate without writing. getVaryKey() has side
+     * effects the pipeline depends on (filling $this->vary, clearing pageCachable,
+     * refreshing the private cookie), so it must always be called early, but only
+     * one write, the last one, should reach the browser. See onAfterRoute().
      *
      * @since   0.1
-     */
-    /**
-     * Compare la clé de variance du visiteur à celle que porte son cookie.
-     *
-     * $writeCookie permet d'évaluer sans écrire. getVaryKey() a des effets de bord
-     * dont le pipeline dépend (remplissage de $this->vary, pageCachable, cookie
-     * privé), il faut donc toujours l'appeler tôt — mais une seule écriture, la
-     * dernière, doit atteindre le navigateur : voir onAfterRoute().
      */
     private function checkVary($value = "", $writeCookie = true) {
 

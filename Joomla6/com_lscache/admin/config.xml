@@ -37,7 +37,7 @@
     </fieldset>
     
     <fieldset name="exclude"  addfieldpath="/administrator/components/com_lscache/models/fields"  label="COM_LSCACHE_FIELDSET_EXCLUDE_LABEL" description="COM_LSCACHE_FIELDSET_EXCLUDE_DESC" >
-        <field name="excludeOptions" type="components" required="false" multiple="multiple" label="COM_LSCACHE_FIELD_EXCLUDE_COMPONENT_LABEL"/>
+        <field name="excludeOptions" type="components" required="false" multiple="multiple" layout="joomla.form.field.list-fancy-select" label="COM_LSCACHE_FIELD_EXCLUDE_COMPONENT_LABEL"/>
         <field name="excludeMenus" type="menuitem" menuType="mainmenu" published="1" clientId="0" multiple="multiple" label="COM_LSCACHE_FIELD_EXCLUDE_MENU_LABEL" />
         <field name="excludeURLs" type="textarea" default="" class="input-xxlarge" rows="15" filter="raw" label="COM_LSCACHE_FIELD_EXCLUDE_URL_LABEL" hint="COM_LSCACHE_FIELD_EXCLUDE_URL_DESC" />
     </fieldset>
@@ -113,11 +113,8 @@
         </field>
         <field name="note_autorecache" type="note" class="alert alert-success" label="COM_LSCACHE_FIELD_RECACHE_AUTORECACHE_DESC" description="COM_LSCACHE_FIELD_RECACHE_AUTORECACHE_NOTE" />
         <field name="recacheDuration" type="text" default="5" label="COM_LSCACHE_FIELD_RECACHE_DURATION_LABEL" description="COM_LSCACHE_FIELD_RECACHE_DURATION_DESC"/>
-        <field name="recacheComponent" type="list" default="" label="COM_LSCACHE_FIELD_RECACHE_COMPONENT_LABEL"  description="COM_LSCACHE_FIELD_RECACHE_COMPONENT_DESC" >
-            <option value="">Please Select</option>
-            <option value="com_virtuemart">com_virtuemart: VirtueMart Component</option>
-            <option value="com_content">com_content: Articles Component</option>
-        </field>
+        <field name="recacheComponents" type="recachecomps"  multiple="true" layout="joomla.form.field.list" label="COM_LSCACHE_FIELD_RECACHE_COMPONENT_LABEL"  description="COM_LSCACHE_FIELD_RECACHE_COMPONENT_DESC" size="2" />
+
                 
     </fieldset>
 

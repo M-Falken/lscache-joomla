@@ -38,7 +38,7 @@ class plgSystemLSCache extends CMSPlugin {
     const MODULE_EMBED = 4;
     const CATEGORY_CONTEXTS = array('com_categories.category', 'com_banners.category', 'com_contact.category', 'com_content.category', 'com_newsfeeds.category', 'com_users.category',
         'com_categories.categories', 'com_banners.categories', 'com_contact.categories', 'com_content.categories', 'com_newsfeeds.categories', 'com_users.categories');
-    const CONTENT_CONTEXTS = array('com_content.article', 'com_content.featured', 'com_content.form', 'com_banner.banner', 'com_contact.contact', 'com_newsfeeds.newsfeed', 'com_content');
+    const CONTENT_CONTEXTS = array('com_content.article', 'com_content.featured', 'com_content.form', 'com_banner.banner', 'com_contact.contact', 'com_contact.form', 'com_newsfeeds.newsfeed', 'com_content');
 
     protected $app;
     protected $cacheEnabled;
@@ -117,6 +117,7 @@ class plgSystemLSCache extends CMSPlugin {
         require_once __DIR__ . '/components/base.php';
         require_once __DIR__ . '/components/helper.php';
         $this->componentHelper = new LSCacheComponentsHelper($this);
+        define('LITESPEED_CACHE_HELPER', $this->componentHelper);
 
         $this->purgeObject = (object) array('tags' => array(), 'urls' => array(), 'option' => "", 'idField' => "", 'ids' => array(), 'purgeAll' => false, 'recacheAll' => false);
         $this->purgeObject->autoRecache = $this->settings->get('autoRecache', 0);
@@ -411,10 +412,12 @@ class plgSystemLSCache extends CMSPlugin {
             try {
                 $menus     = $this->getSiteMap();
                 $crawlList = array_map(function ($m) { return $m->path; }, $menus);
-                $recacheComponent = $this->settings->get('recacheComponent', false);
-                if ($recacheComponent) {
-                    $compUrls  = $this->componentHelper->getComMap($recacheComponent);
-                    $crawlList = array_merge($compUrls, $crawlList);
+                $recacheComponents = $this->settings->get('recacheComponents', array());
+                if (!empty($recacheComponents)) {
+                    foreach ($recacheComponents as $recacheComponent) {
+                        $compUrls  = $this->componentHelper->getComMap($recacheComponent);
+                        $crawlList = array_merge($compUrls, $crawlList);
+                    }    
                 }
             } catch (\Throwable $e) {
                 $crawlList = [];
@@ -2057,10 +2060,12 @@ class plgSystemLSCache extends CMSPlugin {
             $urls = array_map(function($menu) {
                 return $menu->path;
             }, $menus);
-            $recacheComponent = $this->settings->get('recacheComponent', false);
-            if ($recacheComponent) {
-                $compUrls = $this->componentHelper->getComMap($recacheComponent);
-                $urls = array_merge($compUrls,$urls);
+            $recacheComponents = $this->settings->get('recacheComponents', array());
+            if (!empty($recacheComponents)) {
+                foreach ($recacheComponents as $recacheComponent) {
+                    $compUrls  = $this->componentHelper->getComMap($recacheComponent);
+                    $urls = array_merge($compUrls, $urls);
+                }    
             }
         } else if ($this->purgeObject->autoRecache > 0) {
             $urls = $this->purgeObject->urls;

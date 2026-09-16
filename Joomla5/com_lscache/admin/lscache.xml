@@ -65,5 +65,9 @@
             <language tag="en-GB">en-GB/en-GB.mod_lscache.sys.ini</language>
         </languages>
     </administration>
-
+    <updateservers>
+        <server type="extension" priority="1" name="My Component Update Server">
+           https://github.com/litespeedtech/lscache-joomla/blob/master/Joomla5/package/com_lscache_update.xml
+        </server>
+    </updateservers>
 </extension>

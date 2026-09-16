@@ -60,6 +60,10 @@
             <option value="1">JENABLED</option>
         </field>
 
+        <field name="pagecacheVary" type="radio" default="1" class="btn-group btn-group-yesno" label="COM_LSCACHE_FIELD_PAGECACHE_VARY_LABEL" description="COM_LSCACHE_FIELD_PAGECACHE_VARY_DESC">
+            <option value="1">JENABLED</option>
+            <option value="0">JDISABLED</option>
+        </field>
         <field name="consentCookies" type="text" default="cookieconsent_status" class="input-xxlarge" label="COM_LSCACHE_FIELD_CONSENT_COOKIES_LABEL" description="COM_LSCACHE_FIELD_CONSENT_COOKIES_DESC"/>
 
         <field name="adminIPs" type="textarea" default="" class="input-xxlarge" rows="10" filter="raw" label="COM_LSCACHE_FIELD_ADMIN_IP_LABEL"  description="COM_LSCACHE_FIELD_ADMIN_IP_DESCRIPTION" hint="COM_LSCACHE_FIELD_ADMIN_IP_HINT" />

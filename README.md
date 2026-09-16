@@ -68,6 +68,19 @@ Using the Joomla administrator menu, navigate to **Components > LiteSpeed Cache*
 </details>
 
 
+Caching alongside a cookie consent manager
+--------------
+
+Joomla's own page cache plugin lets an extension declare, through the `onPageCacheGetKey` event, that its output depends on something the plugin itself can't see, GDPR consent state being the main case: a visitor who accepted or declined cookies can get different markup (embedded videos, tracking pixels, third party iframes) than a visitor who hasn't decided yet. LSCache honours that same event, so any consent manager that already implements it, com_gdpr among others, gets a correctly split cache under LiteSpeed too instead of one shared copy that's wrong for half your visitors.
+
+Two settings on the **Components > LiteSpeed Cache > Options > Advanced** tab control this:
+
+- **Vary The Cache On Consent** (`pagecacheVary`, on by default). Turn it off only if you've checked that your site's HTML is identical no matter the consent state, comparing a few pages with and without the consent cookie present. If it's off, LSCache skips this vary entirely and behaves like it never happened. If your consent manager ever starts filtering markup server-side, revisit this setting, leaving it off would then start serving tracking scripts to visitors who refused them.
+- **Cookies Carrying A Consent Decision** (`consentCookies`, defaults to `cookieconsent_status`). A comma separated list of cookie names your consent manager sets once a visitor has actually decided. While a visitor carries none of them, LSCache treats them as undecided and serves the shared default copy, so first time visitors, PageSpeed/Lighthouse runs and the auto-recache crawler still benefit from the cache. Only once one of these cookies appears does that visitor get their own cached variant. Leaving this field empty makes every visitor look "undecided", which is safe but defeats the purpose, so point it at whatever cookie your consent manager actually uses.
+
+If you don't run a cookie consent manager at all, you don't need to touch either setting: with no `pagecache` plugin publishing a key, this feature already does nothing.
+
+
 Logging
 --------------
 

@@ -1867,7 +1867,7 @@ class plgSystemLSCache extends CMSPlugin {
         if ($value == "") {
             if (isset($_COOKIE[LiteSpeedCacheBase::VARY_COOKIE])) {
                 if ($writeCookie) {
-                    $inputCookie->set(LiteSpeedCacheBase::VARY_COOKIE, null, time() - 1, '/');
+                    $inputCookie->set(LiteSpeedCacheBase::VARY_COOKIE, null, ['expires' => time() - 1, 'path' => '/']);
                 }
                 return false;
             }
@@ -1876,14 +1876,14 @@ class plgSystemLSCache extends CMSPlugin {
 
         if (!isset($_COOKIE[LiteSpeedCacheBase::VARY_COOKIE])) {
             if ($writeCookie) {
-                $inputCookie->set(LiteSpeedCacheBase::VARY_COOKIE, $value, 0, '/');
+                $inputCookie->set(LiteSpeedCacheBase::VARY_COOKIE, $value, ['expires' => 0, 'path' => '/']);
             }
             return false;
         }
 
         if ($_COOKIE[LiteSpeedCacheBase::VARY_COOKIE] != $value) {
             if ($writeCookie) {
-                $inputCookie->set(LiteSpeedCacheBase::VARY_COOKIE, $value, 0, '/');
+                $inputCookie->set(LiteSpeedCacheBase::VARY_COOKIE, $value, ['expires' => 0, 'path' => '/']);
             }
             return false;
         }

@@ -53,20 +53,29 @@ $colSpan = $clientId === 1 ? 8 : 10;
       // largeur grace a flex-grow - pas de rangee figee a 2 colonnes meme a moitie vide. ?>
 <div class="lscache-dashboard-row" style="display:flex;flex-wrap:wrap;gap:1rem;align-items:flex-start;margin:10px 0;">
     <div id="lscache-rebuild-progress" style="display:none;flex:1 1 380px;margin:0;">
-        <div class="alert alert-info" style="margin:0;position:relative;">
-            <button type="button" id="lscache-rebuild-dismiss" class="btn-close" aria-label="Close" style="display:none;position:absolute;top:10px;right:10px;"></button>
-            <strong id="lscache-rebuild-title"><?php echo Text::_('COM_LSCACHE_REBUILD_IN_PROGRESS'); ?></strong>
-            <div class="progress" style="margin:6px 0 2px;height:20px;">
-                <div id="lscache-rebuild-bar"
-                     class="progress-bar progress-bar-striped progress-bar-animated"
-                     role="progressbar"
-                     style="width:0%;min-width:2em;transition:width 0.4s ease;">
-                </div>
+        <?php // Meme famille visuelle que la carte de diagnostic voisine (carte, en-tete,
+              // coins arrondis) plutot qu'un bloc de couleur plein qui detonnait a cote
+              // d'elle. Le statut reste signale par une bordure d'accent coloree, plus
+              // discrete qu'un fond plein - la barre de progression et le texte de resume
+              // portent deja la meme couleur, le signal n'est donc pas perdu. ?>
+        <div class="card border-start border-4 border-info" id="lscache-rebuild-card">
+            <div class="card-header" style="position:relative;">
+                <button type="button" id="lscache-rebuild-dismiss" class="btn-close" aria-label="Close" style="display:none;position:absolute;top:10px;right:10px;"></button>
+                <strong id="lscache-rebuild-title"><?php echo Text::_('COM_LSCACHE_REBUILD_IN_PROGRESS'); ?></strong>
             </div>
-            <small id="lscache-rebuild-text"><?php echo Text::_('COM_LSCACHE_REBUILD_STARTING'); ?></small>
-            <div id="lscache-rebuild-history" style="display:none;margin-top:8px;padding-top:6px;border-top:1px solid rgba(0,0,0,.1);font-size:0.85em;">
-                <strong id="lscache-rebuild-history-title"><?php echo Text::_('COM_LSCACHE_REBUILD_HISTORY_TITLE'); ?></strong>
-                <ul id="lscache-rebuild-history-list" style="margin:4px 0 0;padding-left:18px;"></ul>
+            <div class="card-body">
+                <div class="progress" style="margin:0 0 2px;height:20px;">
+                    <div id="lscache-rebuild-bar"
+                         class="progress-bar progress-bar-striped progress-bar-animated"
+                         role="progressbar"
+                         style="width:0%;min-width:2em;transition:width 0.4s ease;">
+                    </div>
+                </div>
+                <small id="lscache-rebuild-text"><?php echo Text::_('COM_LSCACHE_REBUILD_STARTING'); ?></small>
+                <div id="lscache-rebuild-history" style="display:none;margin-top:8px;padding-top:6px;border-top:1px solid rgba(0,0,0,.1);font-size:0.85em;">
+                    <strong id="lscache-rebuild-history-title"><?php echo Text::_('COM_LSCACHE_REBUILD_HISTORY_TITLE'); ?></strong>
+                    <ul id="lscache-rebuild-history-list" style="margin:4px 0 0;padding-left:18px;"></ul>
+                </div>
             </div>
         </div>
     </div>
@@ -307,7 +316,7 @@ var _lscRebuild = {
     var text        = document.getElementById('lscache-rebuild-text');
     var title       = document.getElementById('lscache-rebuild-title');
     var dismissBtn  = document.getElementById('lscache-rebuild-dismiss');
-    var alertEl     = wrapper.querySelector('.alert');
+    var cardEl      = wrapper.querySelector('.card');
     var historyBox  = document.getElementById('lscache-rebuild-history');
     var historyList = document.getElementById('lscache-rebuild-history-list');
     // L'encadre de diagnostic est calcule au chargement de la page ; cette liste, elle,
@@ -368,16 +377,18 @@ var _lscRebuild = {
         }
     }
 
-    function formatClock(unixSeconds) {
-        // Le jour seul suffirait tant que le rebuild garde ses entrees en un coup d'oeil,
-        // mais l'historique glisse sur plusieurs jours (jusqu'a 20 passes) : sans la date,
-        // une entree en bas de liste, la plus ancienne, est ambigue - hier, avant-hier ?
+    function formatDay(unixSeconds) {
         var d = new Date(unixSeconds * 1000);
         var day   = ('0' + d.getDate()).slice(-2);
         var month = ('0' + (d.getMonth() + 1)).slice(-2);
+        return day + '/' + month;
+    }
+
+    function formatTime(unixSeconds) {
+        var d = new Date(unixSeconds * 1000);
         var h = ('0' + d.getHours()).slice(-2);
         var m = ('0' + d.getMinutes()).slice(-2);
-        return day + '/' + month + ' ' + h + ':' + m;
+        return h + ':' + m;
     }
 
     // L'encadre de diagnostic est calcule au chargement de la page. Il devient perime des
@@ -412,12 +423,30 @@ var _lscRebuild = {
             return;
         }
         historyList.innerHTML = '';
+        // Le mot le plus repete de la liste (« Visite standard ») revient jusqu'a 20 fois :
+        // regrouper par jour, avec la date en sous-titre plutot que repetee sur chaque
+        // ligne, donne un repere pour scanner la liste au lieu d'un bloc de texte uniforme.
+        var lastDay = null;
         history.forEach(function (entry) {
             if (!entry || !entry.started) { return; }
-            var label = entry.label ? entry.label : (entry.cookie ? entry.cookie : _lscRebuild.historyDefault);
-            var when  = formatClock(entry.started);
-            var state = entry.status === 'error' ? ('⚠ ' + (entry.error || '')) : ((entry.success || 0) + '/' + (entry.total || 0));
+
+            var day = formatDay(entry.started);
+            if (day !== lastDay) {
+                lastDay = day;
+                var dayHeader = document.createElement('li');
+                dayHeader.textContent = day;
+                dayHeader.style.cssText = 'list-style:none;font-weight:600;margin-top:6px;';
+                historyList.appendChild(dayHeader);
+            }
+
+            var label   = entry.label ? entry.label : (entry.cookie ? entry.cookie : _lscRebuild.historyDefault);
+            var when    = formatTime(entry.started);
+            var isError = entry.status === 'error';
+            var state   = isError ? ('⚠ ' + (entry.error || '')) : ((entry.success || 0) + '/' + (entry.total || 0));
             var li = document.createElement('li');
+            // Sur 20 entrees quasi identiques, une passe en erreur ne doit pas dependre
+            // d'une lecture ligne a ligne pour etre repere.
+            if (isError) { li.className = 'text-danger'; }
             li.textContent = when + '  —  ' + label + '  —  ' + state;
             historyList.appendChild(li);
         });
@@ -474,7 +503,7 @@ var _lscRebuild = {
                 wrapper.style.display = 'block';
                 renderHistory(data.history);
                 if (data.status === 'starting') {
-                    alertEl.className = 'alert alert-info';
+                    cardEl.className = 'card border-start border-4 border-info';
                     bar.classList.add('progress-bar-animated');
                     bar.style.background = '';
                     dismissBtn.style.display = 'none';
@@ -483,7 +512,7 @@ var _lscRebuild = {
                     setProgress(0, _lscRebuild.starting);
                 } else if (data.status === 'running') {
                     veille(false);
-                    alertEl.className = 'alert alert-info';
+                    cardEl.className = 'card border-start border-4 border-info';
                     bar.classList.add('progress-bar-animated');
                     bar.style.background = '';
                     dismissBtn.style.display = 'none';
@@ -502,7 +531,7 @@ var _lscRebuild = {
                 } else if (data.status === 'completed') {
                     bar.classList.remove('progress-bar-animated');
                     bar.style.background = '#5cb85c';
-                    alertEl.className = 'alert alert-success';
+                    cardEl.className = 'card border-start border-4 border-success';
                     var duration = (data.finished && data.started) ? formatDuration(data.finished - data.started) : '';
                     var msg = _lscRebuild.completeMsg + ' ' + (data.success || 0) + ' / ' + (data.total || 0) + ' ' + _lscRebuild.pagesCached;
                     if (duration) { msg += ' ' + _lscRebuild.inDuration + ' ' + duration; }
@@ -513,7 +542,7 @@ var _lscRebuild = {
                 } else if (data.status === 'error') {
                     bar.classList.remove('progress-bar-animated');
                     bar.style.background = '#d9534f';
-                    alertEl.className = 'alert alert-danger';
+                    cardEl.className = 'card border-start border-4 border-danger';
                     title.textContent = _lscRebuild.titleError + ' — ' + intitulePasse(data);
                     text.textContent = data.error || 'Unknown error';
                     dismissBtn.style.display = 'inline-block';
@@ -527,7 +556,7 @@ var _lscRebuild = {
                     var sPct     = sTotal ? Math.round(sCurrent / sTotal * 100) : 0;
                     bar.classList.remove('progress-bar-animated');
                     bar.style.background = '#f0ad4e';
-                    alertEl.className = 'alert alert-warning';
+                    cardEl.className = 'card border-start border-4 border-warning';
                     title.textContent = _lscRebuild.titleStalled;
                     setProgress(sPct, _lscRebuild.stalledAt + ' ' + sCurrent + ' / ' + sTotal
                         + ' ' + _lscRebuild.pagesCached + '. ' + _lscRebuild.stalledHint);

@@ -108,31 +108,70 @@ $badge      = $stateClass[$coverage['state']] ?? 'secondary';
         <?php else : ?>
             <p class="mb-2"><?php echo Text::_('COM_LSCACHE_VARY_DIAG_COVERAGE_SHORT'); ?></p>
             <p class="mb-2"><?php echo Text::_('COM_LSCACHE_VARY_DIAG_COVERAGE_HINT'); ?></p>
-            <pre class="mb-0" style="white-space:pre-wrap;word-break:break-all;"><?php
-            foreach ($coverage['missing'] as $bucket) {
-                $cmd = $diag['phpBinary'] . ' ' . $diag['cliPath'];
+            <div class="position-relative">
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="lscache-vary-copy" style="position:absolute;top:4px;right:4px;">
+                    <?php echo Text::_('COM_LSCACHE_VARY_DIAG_COPY'); ?>
+                </button>
+                <pre class="mb-0" id="lscache-vary-commands" style="white-space:pre-wrap;word-break:break-all;padding-top:2.25rem;"><?php
+                foreach ($coverage['missing'] as $bucket) {
+                    $cmd = $diag['phpBinary'] . ' ' . $diag['cliPath'];
 
-                if ($bucket['cookie'] !== '') {
-                    $cmd .= ' --cookie=' . $bucket['cookie'];
+                    if ($bucket['cookie'] !== '') {
+                        $cmd .= ' --cookie=' . $bucket['cookie'];
+                    }
+
+                    if ($bucket['mobile']) {
+                        $cmd .= ' --user-agent=mobile';
+                    }
+
+                    $label = Text::_($bucket['labelKey']);
+
+                    if ($bucket['mobile']) {
+                        $label .= ' ' . Text::_('COM_LSCACHE_VARY_DIAG_LABEL_MOBILE');
+                    }
+
+                    // L'intitule est cite entre apostrophes dans un shell : une apostrophe
+                    // dans une traduction couperait la commande en deux.
+                    $cmd .= " --label='" . str_replace("'", '', $label) . "' --quiet";
+
+                    echo htmlspecialchars($cmd, ENT_QUOTES, 'UTF-8') . "\n";
+                }
+                ?></pre>
+            </div>
+            <script>
+            (function () {
+                // Les commandes sont deja generees avec les vraies valeurs de ce site
+                // (chemins, binaire PHP) : les recopier a la main depuis un <pre> risque
+                // d'en oublier une ligne ou d'attraper un retour a la ligne en trop.
+                var btn = document.getElementById('lscache-vary-copy');
+                var pre = document.getElementById('lscache-vary-commands');
+                if (!btn || !pre) { return; }
+
+                function confirmCopied() {
+                    var original = btn.textContent;
+                    btn.textContent = <?php echo json_encode(Text::_('COM_LSCACHE_VARY_DIAG_COPIED')); ?>;
+                    setTimeout(function () { btn.textContent = original; }, 2000);
                 }
 
-                if ($bucket['mobile']) {
-                    $cmd .= ' --user-agent=mobile';
-                }
-
-                $label = Text::_($bucket['labelKey']);
-
-                if ($bucket['mobile']) {
-                    $label .= ' ' . Text::_('COM_LSCACHE_VARY_DIAG_LABEL_MOBILE');
-                }
-
-                // L'intitule est cite entre apostrophes dans un shell : une apostrophe
-                // dans une traduction couperait la commande en deux.
-                $cmd .= " --label='" . str_replace("'", '', $label) . "' --quiet";
-
-                echo htmlspecialchars($cmd, ENT_QUOTES, 'UTF-8') . "\n";
-            }
-            ?></pre>
+                btn.addEventListener('click', function () {
+                    var text = pre.textContent;
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(text).then(confirmCopied);
+                        return;
+                    }
+                    // Repli pour un contexte sans l'API Clipboard (ancien navigateur,
+                    // page non servie en HTTPS).
+                    var ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    try { document.execCommand('copy'); confirmCopied(); } catch (e) {}
+                    document.body.removeChild(ta);
+                });
+            })();
+            </script>
         <?php endif; ?>
 
         <?php if ($coverage['errors'] > 0) : ?>

@@ -17,6 +17,7 @@ use Joomla\CMS\Layout\FileLayout;
 use Joomla\CMS\HTML\Helpers\Sidebar;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Helper\ModuleHelper;
+use Joomla\CMS\Log\Log;
 /**
  * View class for a list of modules.
  *
@@ -75,6 +76,12 @@ class LSCacheViewModules extends HtmlView
 				$this->varyDiagnostic = LSCacheVaryDiagnostic::collect();
 			} catch (\Throwable $e) {
 				$this->varyDiagnostic = null;
+
+				// L'echec est avale pour l'admin (voir plus haut), mais pas pour nous : sans
+				// trace, un futur changement d'API Joomla qui casse ce calcul ferait
+				// disparaitre l'encadre sans que personne ne le remarque ni ne sache pourquoi.
+				Log::add($e->getMessage() . ' [' . basename($e->getFile()) . ':' . $e->getLine() . ']',
+					Log::WARNING, 'LiteSpeedCache');
 			}
 		}
 

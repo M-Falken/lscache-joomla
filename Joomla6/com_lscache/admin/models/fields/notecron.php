@@ -146,8 +146,66 @@ class JFormFieldNoteCron extends NoteField
         $description = str_replace('{phpdetected}', $this->getDetectedPhpBinary(), $description);
         $description = str_replace('{consentcookie}', $this->getConsentCookieName(), $description);
 
-        $this->element['description'] = $description;
+        $this->element['description'] = '<div id="lscache-cron-note">' . $description . '</div>' . $this->getCopyScript();
 
         return parent::getLabel();
+    }
+
+    /**
+     * Bouton « Copier » a cote de chaque commande complete de la note ci-dessus.
+     *
+     * Les commandes sont deja composees avec les vraies valeurs de ce site (chemins,
+     * binaire PHP) precisement pour etre collees telles quelles dans une crontab - les
+     * recopier a la main depuis du texte affiche risque d'en oublier un bout. Injection
+     * generique en JS plutot qu'un bouton fige par cle de langue : les blocs
+     * conditionnels (consentement, appareil, stock) apparaissent ou disparaissent selon
+     * les reglages sans jamais toucher a ce script.
+     *
+     * Filtre sur la presence de « rebuild.php » : la note contient aussi des <code>
+     * ponctuels qui ne sont pas des commandes a copier (un nom d'option, un chemin cite
+     * en exemple) - seuls les blocs qui invoquent reellement le script sont concernes.
+     */
+    protected function getCopyScript()
+    {
+        $copyLabel   = json_encode(Text::_('COM_LSCACHE_VARY_DIAG_COPY'));
+        $copiedLabel = json_encode(Text::_('COM_LSCACHE_VARY_DIAG_COPIED'));
+
+        return '
+<script>
+(function () {
+    var box = document.getElementById("lscache-cron-note");
+    if (!box) { return; }
+    var codes = box.querySelectorAll("code");
+    codes.forEach(function (codeEl) {
+        if (codeEl.textContent.indexOf("rebuild.php") === -1) { return; }
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "btn btn-sm btn-outline-secondary ms-1";
+        btn.style.verticalAlign = "middle";
+        btn.textContent = ' . $copyLabel . ';
+        btn.addEventListener("click", function () {
+            var text = codeEl.textContent;
+            function done() {
+                var original = btn.textContent;
+                btn.textContent = ' . $copiedLabel . ';
+                setTimeout(function () { btn.textContent = original; }, 2000);
+            }
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(done);
+                return;
+            }
+            var ta = document.createElement("textarea");
+            ta.value = text;
+            ta.style.position = "fixed";
+            ta.style.opacity = "0";
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand("copy"); done(); } catch (e) {}
+            document.body.removeChild(ta);
+        });
+        codeEl.insertAdjacentElement("afterend", btn);
+    });
+})();
+</script>';
     }
 }

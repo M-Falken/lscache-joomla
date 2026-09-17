@@ -45,28 +45,36 @@ $colSpan = $clientId === 1 ? 8 : 10;
 </style>
 <form action="<?php echo Route::_('index.php?option=com_lscache'); ?>" method="post" name="adminForm" id="adminForm">
 
-<div id="lscache-rebuild-progress" style="display:none;margin:10px 0;">
-    <div class="alert alert-info" style="margin-bottom:0;position:relative;">
-        <button type="button" id="lscache-rebuild-dismiss" class="btn-close" aria-label="Close" style="display:none;position:absolute;top:10px;right:10px;"></button>
-        <strong id="lscache-rebuild-title"><?php echo Text::_('COM_LSCACHE_REBUILD_IN_PROGRESS'); ?></strong>
-        <div class="progress" style="margin:6px 0 2px;height:20px;">
-            <div id="lscache-rebuild-bar"
-                 class="progress-bar progress-bar-striped progress-bar-animated"
-                 role="progressbar"
-                 style="width:0%;min-width:2em;transition:width 0.4s ease;">
+<?php // La liste d'historique tient sur quelques mots ; en pleine largeur, l'encadre
+      // vert laissait un vide enorme a droite. Les deux blocs partagent desormais une
+      // rangee flex : chacun garde une largeur minimale lisible (380px) et se replie
+      // en une seule colonne sous ce seuil (mobile), et si l'un des deux est absent
+      // (aucun rebuild recent, ou diagnostic non calcule), l'autre reprend toute la
+      // largeur grace a flex-grow - pas de rangee figee a 2 colonnes meme a moitie vide. ?>
+<div class="lscache-dashboard-row" style="display:flex;flex-wrap:wrap;gap:1rem;align-items:flex-start;margin:10px 0;">
+    <div id="lscache-rebuild-progress" style="display:none;flex:1 1 380px;margin:0;">
+        <div class="alert alert-info" style="margin-bottom:0;position:relative;">
+            <button type="button" id="lscache-rebuild-dismiss" class="btn-close" aria-label="Close" style="display:none;position:absolute;top:10px;right:10px;"></button>
+            <strong id="lscache-rebuild-title"><?php echo Text::_('COM_LSCACHE_REBUILD_IN_PROGRESS'); ?></strong>
+            <div class="progress" style="margin:6px 0 2px;height:20px;">
+                <div id="lscache-rebuild-bar"
+                     class="progress-bar progress-bar-striped progress-bar-animated"
+                     role="progressbar"
+                     style="width:0%;min-width:2em;transition:width 0.4s ease;">
+                </div>
+            </div>
+            <small id="lscache-rebuild-text"><?php echo Text::_('COM_LSCACHE_REBUILD_STARTING'); ?></small>
+            <div id="lscache-rebuild-history" style="display:none;margin-top:8px;padding-top:6px;border-top:1px solid rgba(0,0,0,.1);font-size:0.85em;">
+                <strong id="lscache-rebuild-history-title"><?php echo Text::_('COM_LSCACHE_REBUILD_HISTORY_TITLE'); ?></strong>
+                <ul id="lscache-rebuild-history-list" style="margin:4px 0 0;padding-left:18px;"></ul>
             </div>
         </div>
-        <small id="lscache-rebuild-text"><?php echo Text::_('COM_LSCACHE_REBUILD_STARTING'); ?></small>
-        <div id="lscache-rebuild-history" style="display:none;margin-top:8px;padding-top:6px;border-top:1px solid rgba(0,0,0,.1);font-size:0.85em;">
-            <strong id="lscache-rebuild-history-title"><?php echo Text::_('COM_LSCACHE_REBUILD_HISTORY_TITLE'); ?></strong>
-            <ul id="lscache-rebuild-history-list" style="margin:4px 0 0;padding-left:18px;"></ul>
-        </div>
     </div>
-</div>
 
-<?php if ($this->varyDiagnostic !== null) : ?>
-	<?php echo $this->loadTemplate('vary_diagnostic'); ?>
-<?php endif; ?>
+    <?php if ($this->varyDiagnostic !== null) : ?>
+        <?php echo $this->loadTemplate('vary_diagnostic'); ?>
+    <?php endif; ?>
+</div>
 
 <?php if (!empty( $this->sidebar)) : ?>
 	<div id="j-sidebar-container" class="span2">

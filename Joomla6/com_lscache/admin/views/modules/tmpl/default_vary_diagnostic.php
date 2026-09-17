@@ -23,7 +23,7 @@ $stateClass = array('ok' => 'success', 'short' => 'danger', 'stale' => 'warning'
                     'purged' => 'warning', 'none' => 'secondary');
 $badge      = $stateClass[$coverage['state']] ?? 'secondary';
 ?>
-<div class="card mb-3" id="lscache-vary-diagnostic">
+<div class="card mb-3" id="lscache-vary-diagnostic" style="flex:1 1 380px;">
     <div class="card-header">
         <strong><?php echo Text::_('COM_LSCACHE_VARY_DIAG_TITLE'); ?></strong>
     </div>

@@ -53,7 +53,7 @@ $colSpan = $clientId === 1 ? 8 : 10;
       // largeur grace a flex-grow - pas de rangee figee a 2 colonnes meme a moitie vide. ?>
 <div class="lscache-dashboard-row" style="display:flex;flex-wrap:wrap;gap:1rem;align-items:flex-start;margin:10px 0;">
     <div id="lscache-rebuild-progress" style="display:none;flex:1 1 380px;margin:0;">
-        <div class="alert alert-info" style="margin-bottom:0;position:relative;">
+        <div class="alert alert-info" style="margin:0;position:relative;">
             <button type="button" id="lscache-rebuild-dismiss" class="btn-close" aria-label="Close" style="display:none;position:absolute;top:10px;right:10px;"></button>
             <strong id="lscache-rebuild-title"><?php echo Text::_('COM_LSCACHE_REBUILD_IN_PROGRESS'); ?></strong>
             <div class="progress" style="margin:6px 0 2px;height:20px;">

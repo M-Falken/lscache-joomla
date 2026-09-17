@@ -160,7 +160,7 @@ $badge      = $stateClass[$coverage['state']] ?? 'secondary';
             <?php foreach ($purges['entries'] as $p) : ?>
                 <li class="mb-1 d-flex align-items-start">
                     <span class="d-inline-flex align-items-center flex-shrink-0" style="gap:.5rem;">
-                        <span class="d-inline-block" style="min-width:9rem;">
+                        <span class="d-inline-block" style="min-width:4rem;">
                             <?php echo HTMLHelper::_('date', gmdate('Y-m-d H:i:s', $p['time']), 'd/m H:i'); ?>
                         </span>
                         <span class="badge bg-<?php echo $p['origin'] === 'site' ? 'warning' : 'secondary'; ?>">

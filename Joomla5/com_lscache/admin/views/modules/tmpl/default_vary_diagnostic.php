@@ -44,26 +44,36 @@ $badge      = $stateClass[$coverage['state']] ?? 'secondary';
             </button>
         </div>
 
+        <?php // Sur une colonne etroite, un badge + une note un peu longue debordaient
+              // et la ligne coupee reprenait au ras de la marge gauche de la carte, sous
+              // le badge, au lieu de rester alignee sous le debut de la note. Chaque ligne
+              // est desormais une rangee flex a 2 zones : le libelle+badge ne retrecit
+              // jamais (flex-shrink-0), la note absorbe seule le manque de place et
+              // s'enroule dans sa propre colonne (min-width:0 autorise ce retrecissement,
+              // sinon un flex-item garde sa largeur de contenu et deborde). ?>
         <ul class="list-unstyled mb-3">
         <?php foreach ($diag['dimensions'] as $dimension) : ?>
-            <li class="mb-1">
-                <span class="d-inline-block" style="min-width:11rem;">
-                    <?php echo Text::_('COM_LSCACHE_VARY_DIAG_DIM_' . strtoupper($dimension['key'])); ?>
-                </span>
-                <?php if ($dimension['active']) : ?>
-                    <span class="badge bg-info"><?php echo Text::_('COM_LSCACHE_VARY_DIAG_STATE_ACTIVE'); ?></span>
-                <?php else : ?>
-                    <span class="badge bg-secondary"><?php echo Text::_('COM_LSCACHE_VARY_DIAG_STATE_INACTIVE'); ?></span>
-                <?php endif; ?>
-
-                <?php if (!empty($dimension['fedBy'])) : ?>
-                    <span class="text-muted ms-2">
-                        <?php echo Text::sprintf('COM_LSCACHE_VARY_DIAG_FED_BY', implode(', ', $dimension['fedBy'])); ?>
+            <li class="mb-1 d-flex align-items-start">
+                <span class="d-inline-flex align-items-center flex-shrink-0" style="gap:.5rem;">
+                    <span class="d-inline-block" style="min-width:7rem;">
+                        <?php echo Text::_('COM_LSCACHE_VARY_DIAG_DIM_' . strtoupper($dimension['key'])); ?>
                     </span>
-                <?php endif; ?>
+                    <?php if ($dimension['active']) : ?>
+                        <span class="badge bg-info"><?php echo Text::_('COM_LSCACHE_VARY_DIAG_STATE_ACTIVE'); ?></span>
+                    <?php else : ?>
+                        <span class="badge bg-secondary"><?php echo Text::_('COM_LSCACHE_VARY_DIAG_STATE_INACTIVE'); ?></span>
+                    <?php endif; ?>
+                </span>
 
-                <?php if ($dimension['note'] !== '') : ?>
-                    <span class="text-muted ms-2"><?php echo Text::_($dimension['note']); ?></span>
+                <?php if (!empty($dimension['fedBy']) || $dimension['note'] !== '') : ?>
+                    <span class="text-muted ms-2" style="min-width:0;">
+                        <?php if (!empty($dimension['fedBy'])) : ?>
+                            <?php echo Text::sprintf('COM_LSCACHE_VARY_DIAG_FED_BY', implode(', ', $dimension['fedBy'])); ?>
+                        <?php endif; ?>
+                        <?php if ($dimension['note'] !== '') : ?>
+                            <?php echo Text::_($dimension['note']); ?>
+                        <?php endif; ?>
+                    </span>
                 <?php endif; ?>
             </li>
         <?php endforeach; ?>
@@ -148,14 +158,16 @@ $badge      = $stateClass[$coverage['state']] ?? 'secondary';
         <?php else : ?>
             <ul class="list-unstyled small mb-2">
             <?php foreach ($purges['entries'] as $p) : ?>
-                <li class="mb-1">
-                    <span class="d-inline-block" style="min-width:9rem;">
-                        <?php echo HTMLHelper::_('date', gmdate('Y-m-d H:i:s', $p['time']), 'd/m H:i'); ?>
+                <li class="mb-1 d-flex align-items-start">
+                    <span class="d-inline-flex align-items-center flex-shrink-0" style="gap:.5rem;">
+                        <span class="d-inline-block" style="min-width:9rem;">
+                            <?php echo HTMLHelper::_('date', gmdate('Y-m-d H:i:s', $p['time']), 'd/m H:i'); ?>
+                        </span>
+                        <span class="badge bg-<?php echo $p['origin'] === 'site' ? 'warning' : 'secondary'; ?>">
+                            <?php echo Text::_('COM_LSCACHE_VARY_DIAG_ORIGIN_' . strtoupper($p['origin'])); ?>
+                        </span>
                     </span>
-                    <span class="badge bg-<?php echo $p['origin'] === 'site' ? 'warning' : 'secondary'; ?>">
-                        <?php echo Text::_('COM_LSCACHE_VARY_DIAG_ORIGIN_' . strtoupper($p['origin'])); ?>
-                    </span>
-                    <span class="text-muted ms-2"><?php echo htmlspecialchars($p['detail'], ENT_QUOTES, 'UTF-8'); ?></span>
+                    <span class="text-muted ms-2" style="min-width:0;"><?php echo htmlspecialchars($p['detail'], ENT_QUOTES, 'UTF-8'); ?></span>
                 </li>
             <?php endforeach; ?>
             </ul>

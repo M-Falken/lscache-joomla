@@ -228,10 +228,18 @@ class LSCacheVaryDiagnostic
 
     /**
      * Liste vide = réglage désactivé, il n'y a pas de bascule séparée.
+     *
+     * exists() plutôt que get(..., 'cookieconsent_status') : Registry::get() traite une
+     * valeur enregistrée "" exactement comme absente et revient au défaut fourni, ce qui
+     * rendrait un champ vidé délibérément indiscernable d'un champ jamais configuré.
      */
     private static function consentCookieNames($params)
     {
-        $configured = (string) $params->get('consentCookies', 'cookieconsent_status');
+        if ($params->exists('consentCookies')) {
+            $configured = (string) $params->get('consentCookies', '');
+        } else {
+            $configured = 'cookieconsent_status';
+        }
 
         return array_filter(array_map('trim', explode(',', $configured)), 'strlen');
     }

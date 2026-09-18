@@ -1601,19 +1601,18 @@ class plgSystemLSCache extends CMSPlugin {
      * Does the visitor carry a recorded consent decision?
      *
      * Cookie names come from configuration rather than code: this plugin doesn't need
-     * to know which consent manager is installed. An empty field means we can't tell
-     * a default visitor from a decided one, so it varies in every case. Content
-     * correctness takes priority over hit ratio.
+     * to know which consent manager is installed. An empty field means the setting is
+     * off - there is no separate toggle, a site that wants this off just clears the
+     * field.
      */
     private function hasConsentDecision() {
-        $configured = (string) $this->settings->get('consentCookies', 'cookieconsent_status');
+        $configured = (string) $this->settings->get('consentCookies', '');
         $names      = array_filter(array_map('trim', explode(',', $configured)), 'strlen');
 
-        // No usable name - empty field, blanks, commas only: we can't tell a default
-        // visitor from a decided one, so it varies in every case. Content correctness
-        // takes priority over hit ratio.
+        // No usable name - empty field, blanks, commas only: the setting is off, no
+        // splitting happens at all.
         if (empty($names)) {
-            return true;
+            return false;
         }
 
         foreach ($names as $name) {
@@ -1633,19 +1632,12 @@ class plgSystemLSCache extends CMSPlugin {
      *  event here lets those extensions vary the LiteSpeed cache too, the GDPR
      *  consent state (com_gdpr, "auto manage caching" set to Advanced) being
      *  the typical case: without it a single cached copy is shared by visitors
-     *  who accepted and refused cookies alike.
+     *  who accepted and refused cookies alike. An empty consentCookies list turns
+     *  this off entirely - what a site whose HTML does NOT depend on consent
+     *  should do, since a consent manager that started filtering HTML server
+     *  side would otherwise make this dangerous overnight.
      */
     private function getPageCacheVary() {
-        // Explicit cutoff, for a site that has verified its HTML output doesn't
-        // depend on consent state. The vary would then split the cache into
-        // identical copies, each needing its own warm-up. The condition is stated
-        // in the setting's description, and it's a real one: a consent manager
-        // that starts filtering HTML server side would turn this setting
-        // dangerous overnight.
-        if (!$this->settings->get('pagecacheVary', 1)) {
-            return '';
-        }
-
         if (!class_exists('Joomla\\CMS\\Event\\PageCache\\GetKeyEvent')) {
             return '';
         }

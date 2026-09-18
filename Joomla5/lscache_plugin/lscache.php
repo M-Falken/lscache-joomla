@@ -24,6 +24,7 @@ use Joomla\CMS\Router\Route;
 use Joomla\CMS\Log\Log;
 use Joomla\CMS\Helper\ModuleHelper;
 use Joomla\CMS\Event\PageCache\GetKeyEvent;
+use Joomla\Registry\Registry;
 
 /**
  * LiteSpeed Cache Plugin for Joomla running on LiteSpeed Webserver (LSWS).
@@ -325,7 +326,57 @@ class plgSystemLSCache extends CMSPlugin {
         if($this->esiModule!=null){
             $modules = array( $this->esiModule ) ;
             $this->pageCachable = false;
+            // Rendu d'un bloc ESI : c'est lui que LiteSpeed met en cache, pas la page.
+            $this->bypassVmModuleCache($modules);
+        } else if ($this->pageCachable) {
+            $this->bypassVmModuleCache($modules);
         }
+    }
+
+    /**
+     * Desactive le cache propre de mod_virtuemart_product (option « vmcache », active par
+     * defaut pour 60 min) le temps d'un rendu que LiteSpeed va mettre en cache.
+     *
+     * Servi depuis ce cache, le module ne charge aucun produit : la page ne recevrait pas
+     * leurs etiquettes (getDisplayedTags()), et une page purgee apres un changement de prix
+     * se reconstruirait avec l'ancien, que le rechauffage figerait ensuite pour toute la
+     * duree de vie du cache LiteSpeed. Sur une page que LiteSpeed sert, ce second cache
+     * n'epargne que le calcul d'un miss ; les pages non cachees le gardent.
+     *
+     * Les objets module sont partages avec ModuleHelper : les modifier suffit, que le
+     * tableau passe par reference soit ou non repris par le dispatcher.
+     */
+    private function bypassVmModuleCache(array $modules) {
+        foreach ($modules as $module) {
+            if ((!is_object($module)) || (($module->module ?? '') !== 'mod_virtuemart_product')) {
+                continue;
+            }
+            $shared = ($module->params instanceof Registry);
+            $params = $shared ? $module->params : new Registry($module->params ?? '');
+            if (!$params->get('vmcache', 1)) {
+                continue;
+            }
+            $params->set('vmcache', 0);
+            if (!$shared) {
+                $module->params = $params->toString();
+            }
+        }
+    }
+
+    /**
+     * Etiquettes des produits charges pendant ce rendu hors du contexte de la page :
+     * modules, produits lies, declinaisons. Voir
+     * LSCacheComponentVirtueMart::getDisplayedProductTags().
+     */
+    private function getDisplayedTags() {
+        if ($this->componentHelper === null) {
+            return '';
+        }
+        $vm = $this->componentHelper->getInstance('com_virtuemart');
+        if (($vm === null) || (!method_exists($vm, 'getDisplayedProductTags'))) {
+            return '';
+        }
+        return (string) $vm->getDisplayedProductTags();
     }
 
     public function onAfterRenderModule($module, $attribs=[]) {
@@ -591,6 +642,12 @@ class plgSystemLSCache extends CMSPlugin {
             $this->cacheTags[] = $option;
         }
 
+
+        // Produits affiches hors du contexte de la page : modules, produits lies, declinaisons.
+        $displayed = $this->getDisplayedTags();
+        if ($displayed !== '') {
+            $this->cacheTags[] = $displayed;
+        }
 
         $templateName = $this->app->getTemplate();
         $view = isset($this->pageElements["view"]) ? $this->pageElements["view"] : "default";
@@ -1677,12 +1734,20 @@ class plgSystemLSCache extends CMSPlugin {
         $lang->load($moduleLanguage, JPATH_SITE);
 
         $oldContent = $module->content;
+        // Voir bypassVmModuleCache() : ce bloc est rendu pour etre mis en cache.
+        $this->bypassVmModuleCache(array($module));
         $module->esiRending = true;
         $content = ModuleHelper::renderModule($module, $attribs);
         if ($content) {
             $tag = "com_modules:" . $module->id;
             if ($tag1 !== "") {
                 $tag .= ',' . $tag1;
+            }
+
+            // Produits du module, pour que leur purge atteigne aussi ce bloc.
+            $displayed = $this->getDisplayedTags();
+            if ($displayed !== '') {
+                $tag .= ',' . $displayed;
             }
 
             if (!empty($module->lscache_tag)) {

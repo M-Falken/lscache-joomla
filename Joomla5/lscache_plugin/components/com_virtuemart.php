@@ -12,6 +12,8 @@ use Joomla\CMS\Factory;
 
 class LSCacheComponentVirtueMart extends LSCacheComponentBase
 {
+    // Produits etiquetes au plus par page, voir getDisplayedProductTags().
+    const DISPLAYED_TAGS_MAX = 100;
 
     public function onRegisterEvents()
     {
@@ -455,6 +457,65 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
         // Page sans produit ni categorie propre (accueil boutique, fabricants, recherche) :
         // tag generique, vide par les purges qui peuvent la concerner.
         return $option;
+    }
+
+    /**
+     * Etiquettes des produits charges pendant le rendu de la page : produits des modules,
+     * produits lies, declinaisons, parent dont une declinaison herite.
+     *
+     * Une page ne portait que l'etiquette de son propre contexte. Enregistrer un produit
+     * laissait donc en cache l'accueil qui le montrait dans « Produits vedettes », et la
+     * fiche d'un autre produit qui le proposait en produit lie, jusqu'a leur expiration.
+     * Meme chose, dans la limite du plafond, pour les listes ou figurait un produit
+     * supprime : VirtueMart efface ses liens de categorie avant de declencher
+     * plgVmOnDeleteProduct, qui ne peut donc plus purger ces categories.
+     *
+     * Source : les caches statiques de VirtueMartModelProduct, remplis par chaque
+     * getProduct() et getProductSingle() de la requete. Proprietes internes, publiques
+     * depuis VirtueMart 3 : si elles disparaissent, la page perd seulement ces etiquettes.
+     *
+     * @return  string  Liste separee par des virgules, vide si VirtueMart n'a rien charge.
+     */
+    public function getDisplayedProductTags()
+    {
+        if (!class_exists('VirtueMartModelProduct', false)) {
+            return '';
+        }
+
+        // Sur une liste de categorie, ses propres produits sont deja couverts par l'etiquette
+        // de la categorie : ils passent apres les autres, et sautent les premiers au plafond.
+        $input  = Factory::getApplication()->getInput();
+        $listed = ($input->getCmd('view', '') === 'category')
+                ? $this->firstInt($input->get('virtuemart_category_id', 0, 'raw')) : 0;
+
+        $outside = array();
+        $inside  = array();
+        try {
+            foreach (array(VirtueMartModelProduct::$_products, VirtueMartModelProduct::$_productsSingle) as $cache) {
+                foreach ((array) $cache as $product) {
+                    if (!is_object($product) || empty($product->virtuemart_product_id)) {
+                        continue;
+                    }
+                    $pid = (int) $product->virtuemart_product_id;
+                    if (($listed > 0) && is_array($product->categories ?? null)
+                        && in_array($listed, array_map('intval', $product->categories), true)) {
+                        $inside[$pid] = true;
+                    } else {
+                        $outside[$pid] = true;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            return '';
+        }
+
+        // Borne l'en-tete X-LiteSpeed-Tag, a environ 35 octets par produit.
+        $ids  = array_keys($outside + array_diff_key($inside, $outside));
+        $tags = array();
+        foreach (array_slice($ids, 0, self::DISPLAYED_TAGS_MAX) as $pid) {
+            $tags[] = 'com_virtuemart.product:' . $pid;
+        }
+        return implode(',', $tags);
     }
 
     /**

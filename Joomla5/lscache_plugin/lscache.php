@@ -1905,16 +1905,13 @@ class plgSystemLSCache extends CMSPlugin {
      * que sa sortie HTML ne dépend pas du consentement vide simplement ce champ.
      */
     private function hasConsentDecision() {
-        // Registry::get() traite une valeur enregistree "" exactement comme absente et
-        // revient au defaut fourni : sans exists(), un champ vide ENREGISTRE redeviendrait
-        // indiscernable d'un champ jamais configure, et ce reglage ne pourrait plus jamais
-        // s'eteindre une fois sauvegarde au moins une fois.
-        if ($this->settings->exists('consentCookies')) {
-            $configured = (string) $this->settings->get('consentCookies', '');
-        } else {
-            $configured = 'cookieconsent_status';
-        }
-        $names = array_filter(array_map('trim', explode(',', $configured)), 'strlen');
+        // Le champ n'a plus de defaut XML non vide : Form::filter() de Joomla applique
+        // $input->get($key, (string) $field['default']) sur la valeur soumise AVANT
+        // l'enregistrement, donc un defaut non vide aurait remplace silencieusement tout
+        // champ vide par ce defaut au moment meme de la sauvegarde. Champ vide veut
+        // toujours dire desactive, y compris sur une installation neuve jamais configuree.
+        $configured = (string) $this->settings->get('consentCookies', '');
+        $names      = array_filter(array_map('trim', explode(',', $configured)), 'strlen');
 
         // Aucun nom exploitable - champ vide, blancs, virgules seules : reglage
         // desactive, aucune fragmentation n'a lieu.

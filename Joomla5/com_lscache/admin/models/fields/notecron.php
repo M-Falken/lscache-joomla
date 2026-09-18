@@ -118,15 +118,8 @@ class JFormFieldNoteCron extends NoteField
         $settings = ComponentHelper::getParams('com_lscache');
         $blocs    = array();
 
-        // exists() plutot que get(..., 'cookieconsent_status') : Registry::get() traite
-        // une valeur enregistree "" exactement comme absente et revient au defaut fourni,
-        // ce qui rendrait un champ vide indiscernable d'un champ jamais configure.
-        if ($settings->exists('consentCookies')) {
-            $configured = (string) $settings->get('consentCookies', '');
-        } else {
-            $configured = 'cookieconsent_status';
-        }
-        $names = array_filter(array_map('trim', explode(',', $configured)), 'strlen');
+        $configured = (string) $settings->get('consentCookies', '');
+        $names      = array_filter(array_map('trim', explode(',', $configured)), 'strlen');
 
         if (!empty($names)) {
             $blocs[] = Text::_('COM_LSCACHE_FIELD_CRON_NOTE_CONSENT');

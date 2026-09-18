@@ -92,17 +92,27 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
             $data = $data->getArgument('0');
         }
 
-        $category_tag = $this->getProductCategoryTags($product_data->virtuemart_product_id);
-        $tag = "com_virtuemart, com_virtuemart.product:" . $product_data->virtuemart_product_id . $category_tag;
+        // Une declinaison s'affiche aussi sur la fiche de son parent (selecteur, prix, stock)
+        // et, a travers lui, dans les listes de ses categories, qu'elle n'a en general pas.
+        // Seules les commandes et --purge-changed purgeaient le parent jusqu'ici.
+        $productIds = array((int) $product_data->virtuemart_product_id);
+        $productIds = array_values(array_unique(array_merge($productIds, $this->getParentIds($productIds))));
+
+        $tag = "com_virtuemart" . $this->getProductCategoryTags($productIds);
+        foreach ($productIds as $pid) {
+            $tag .= ", com_virtuemart.product:" . $pid;
+        }
         $this->plugin->purgeObject->tags[] = $tag;
         if($this->plugin->purgeObject->autoRecache==0){
             $this->plugin->purgeAction();
             return;
         }
-        $this->plugin->purgeObject->urls = $this->getProductCategoryUrls($product_data->virtuemart_product_id);
-        $this->plugin->purgeObject->urls[] = 'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $product_data->virtuemart_product_id.'&virtuemart_category_id=0';
+        $this->plugin->purgeObject->urls = $this->getProductCategoryUrls($productIds);
+        foreach ($productIds as $pid) {
+            $this->plugin->purgeObject->urls[] = 'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $pid . '&virtuemart_category_id=0';
+        }
         $this->plugin->purgeAction();
-        
+
     }
 
     public function plgVmOnDeleteProduct($data, $ok=true)

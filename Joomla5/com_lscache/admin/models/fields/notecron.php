@@ -118,7 +118,10 @@ class JFormFieldNoteCron extends NoteField
         $settings = ComponentHelper::getParams('com_lscache');
         $blocs    = array();
 
-        if ($settings->get('pagecacheVary', 1)) {
+        $configured = (string) $settings->get('consentCookies', 'cookieconsent_status');
+        $names      = array_filter(array_map('trim', explode(',', $configured)), 'strlen');
+
+        if (!empty($names)) {
             $blocs[] = Text::_('COM_LSCACHE_FIELD_CRON_NOTE_CONSENT');
         }
 

@@ -130,17 +130,19 @@ class LSCacheVaryDiagnostic
      */
     private static function probeConsent($params)
     {
+        $names = self::consentCookieNames($params);
+
         $dimension = array(
             'key'     => 'consent',
             'active'  => false,
             'buckets' => self::CONSENT_BUCKETS,
             'fedBy'   => array(),
-            'cookie'  => self::consentCookieName($params),
+            'cookie'  => empty($names) ? '' : reset($names),
             'counted' => true,
             'note'    => '',
         );
 
-        if (!$params->get('pagecacheVary', 1)) {
+        if (empty($names)) {
             $dimension['note'] = 'COM_LSCACHE_VARY_DIAG_NOTE_CONSENT_OFF';
 
             return $dimension;
@@ -224,12 +226,14 @@ class LSCacheVaryDiagnostic
         return $short;
     }
 
-    private static function consentCookieName($params)
+    /**
+     * Liste vide = réglage désactivé, il n'y a pas de bascule séparée.
+     */
+    private static function consentCookieNames($params)
     {
         $configured = (string) $params->get('consentCookies', 'cookieconsent_status');
-        $names      = array_filter(array_map('trim', explode(',', $configured)), 'strlen');
 
-        return empty($names) ? 'cookieconsent_status' : reset($names);
+        return array_filter(array_map('trim', explode(',', $configured)), 'strlen');
     }
 
     /**

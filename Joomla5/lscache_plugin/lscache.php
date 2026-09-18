@@ -1900,19 +1900,18 @@ class plgSystemLSCache extends CMSPlugin {
      * Le visiteur porte-t-il une décision de consentement enregistrée ?
      *
      * Les noms de cookies viennent de la configuration plutôt que du code : ce plugin
-     * n'a pas à connaître le gestionnaire de consentement installé. Champ vide = on ne
-     * sait pas distinguer un visiteur par défaut d'un visiteur décidé, on fait donc
-     * varier dans tous les cas. L'exactitude du contenu prime sur le taux de hit.
+     * n'a pas à connaître le gestionnaire de consentement installé. Champ vide = le
+     * réglage est désactivé : il n'y a pas de bascule séparée, un site qui a vérifié
+     * que sa sortie HTML ne dépend pas du consentement vide simplement ce champ.
      */
     private function hasConsentDecision() {
         $configured = (string) $this->settings->get('consentCookies', 'cookieconsent_status');
         $names      = array_filter(array_map('trim', explode(',', $configured)), 'strlen');
 
-        // Aucun nom exploitable - champ vide, blancs, virgules seules : on ne sait pas
-        // distinguer un visiteur par défaut d'un visiteur décidé, on fait donc varier dans
-        // tous les cas. L'exactitude du contenu prime sur le taux de hit.
+        // Aucun nom exploitable - champ vide, blancs, virgules seules : reglage
+        // desactive, aucune fragmentation n'a lieu.
         if (empty($names)) {
-            return true;
+            return false;
         }
 
         foreach ($names as $name) {
@@ -1932,19 +1931,12 @@ class plgSystemLSCache extends CMSPlugin {
      *  event here lets those extensions vary the LiteSpeed cache too, the GDPR
      *  consent state (com_gdpr, "auto manage caching" set to Advanced) being
      *  the typical case: without it a single cached copy is shared by visitors
-     *  who accepted and refused cookies alike.
+     *  who accepted and refused cookies alike. An empty consentCookies list
+     *  turns this off entirely - it is what a site whose HTML does NOT depend
+     *  on consent should do, since a gestionnaire that started filtering
+     *  server side would otherwise make this dangerous overnight.
      */
     private function getPageCacheVary() {
-        // Coupure explicite, pour un site qui a VERIFIE que sa sortie HTML ne depend pas
-        // de l'etat de consentement. Le vary fragmente alors le cache en copies identiques :
-        // chaque variante doit etre rechauffee separement alors qu'aucune ne differe. La
-        // condition est dans la description du reglage, et elle est serieuse - un gestionnaire
-        // de consentement qui se mettrait a filtrer le HTML cote serveur rendrait ce reglage
-        // dangereux du jour au lendemain.
-        if (!$this->settings->get('pagecacheVary', 1)) {
-            return '';
-        }
-
         if (!class_exists('Joomla\\CMS\\Event\\PageCache\\GetKeyEvent')) {
             return '';
         }

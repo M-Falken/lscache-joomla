@@ -251,9 +251,12 @@ $badge      = $stateClass[$coverage['state']] ?? 'secondary';
                     <p class="text-muted mb-0"><?php echo Text::_('COM_LSCACHE_VARY_DIAG_TARGETED_NONE'); ?></p>
                 <?php else : ?>
                     <ul class="list-unstyled small mb-2">
-                    <?php foreach ($targeted['entries'] as $p) : ?>
-                        <?php $source = in_array($p['source'], array('order', 'stock'), true)
-                            ? Text::_('COM_LSCACHE_VARY_DIAG_TARGETED_SOURCE_' . strtoupper($p['source'])) : $p['detail']; ?>
+                    <?php foreach ($targeted['entries'] as $i => $p) : ?>
+                        <?php
+                            $source  = in_array($p['source'], array('order', 'stock'), true)
+                                ? Text::_('COM_LSCACHE_VARY_DIAG_TARGETED_SOURCE_' . strtoupper($p['source'])) : $p['detail'];
+                            $modalId = 'lscache-targeted-modal-' . (int) $i;
+                        ?>
                         <li class="mb-1 d-flex align-items-start">
                             <span class="d-inline-flex align-items-center flex-shrink-0" style="gap:.5rem;">
                                 <span class="d-inline-block" style="min-width:4rem;">
@@ -265,12 +268,36 @@ $badge      = $stateClass[$coverage['state']] ?? 'secondary';
                                 </span>
                             </span>
                             <span class="ms-2" style="min-width:0;">
-                                <span title="<?php echo htmlspecialchars(implode(', ', $p['names']), ENT_QUOTES, 'UTF-8'); ?>">
-                                    <?php echo htmlspecialchars(implode(', ', array_slice($p['names'], 0, LSCacheVaryDiagnostic::TARGETED_NAMED)), ENT_QUOTES, 'UTF-8'); ?>
-                                    <?php if ($p['more'] > 0) : ?>
+                                <?php echo htmlspecialchars(implode(', ', array_slice($p['names'], 0, LSCacheVaryDiagnostic::TARGETED_NAMED)), ENT_QUOTES, 'UTF-8'); ?>
+                                <?php if ($p['more'] > 0) : ?>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 ms-1"
+                                            data-bs-toggle="modal" data-bs-target="#<?php echo $modalId; ?>">
                                         <?php echo Text::plural('COM_LSCACHE_VARY_DIAG_TARGETED_MORE', (int) $p['more']); ?>
-                                    <?php endif; ?>
-                                </span>
+                                    </button>
+
+                                    <div class="modal fade" id="<?php echo $modalId; ?>" tabindex="-1" aria-hidden="true">
+                                        <div class="modal-dialog modal-dialog-centered">
+                                            <div class="modal-content">
+                                                <div class="modal-header">
+                                                    <h5 class="modal-title">
+                                                        <?php echo Text::_('COM_LSCACHE_VARY_DIAG_TARGETED_TITLE'); ?>
+                                                        <small class="text-muted d-block">
+                                                            <?php echo HTMLHelper::_('date', gmdate('Y-m-d H:i:s', $p['time']), 'd/m H:i'); ?>
+                                                        </small>
+                                                    </h5>
+                                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                                </div>
+                                                <div class="modal-body">
+                                                    <ul class="mb-0">
+                                                        <?php foreach ($p['names'] as $name) : ?>
+                                                            <li><?php echo htmlspecialchars($name, ENT_QUOTES, 'UTF-8'); ?></li>
+                                                        <?php endforeach; ?>
+                                                    </ul>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                <?php endif; ?>
                                 <span class="d-block text-muted"><?php echo htmlspecialchars($source, ENT_QUOTES, 'UTF-8'); ?></span>
                             </span>
                         </li>

@@ -806,8 +806,13 @@ class LSCacheVaryDiagnostic
                     ->whereIn($db->quoteName('virtuemart_product_id'), $missing);
 
                 foreach ((array) $db->setQuery($query)->loadObjectList() as $row) {
-                    if (trim((string) $row->product_name) !== '') {
-                        $names[(int) $row->virtuemart_product_id] = (string) $row->product_name;
+                    // VirtueMart enregistre product_name deja echappe (& devient &amp;) : le
+                    // decoder ici evite un double echappement au rendu (htmlspecialchars()
+                    // afficherait alors "&amp;" en toutes lettres).
+                    $name = html_entity_decode((string) $row->product_name, ENT_QUOTES, 'UTF-8');
+
+                    if (trim($name) !== '') {
+                        $names[(int) $row->virtuemart_product_id] = $name;
                     }
                 }
             }

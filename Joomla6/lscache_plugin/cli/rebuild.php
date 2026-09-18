@@ -52,7 +52,9 @@
  *                             (code 0) : le suivant rattrapera. Réchauffe aussi, dans la
  *                             même passe, les pages que les commandes confirmées et les
  *                             enregistrements de produits de l'administration ont purgées
- *                             et mises en file.
+ *                             et mises en file. Chaque page est réchauffée sans cookie, puis
+ *                             dans chaque variante (--cookie, --user-agent) que le rebuild
+ *                             a préchauffée ces huit derniers jours.
  *   --limit=N                 Ne traite que les N premières URLs (test de fumée).
  *   --quiet                   N'affiche que les erreurs. À utiliser en cron.
  *   --help                    Affiche cette aide.
@@ -290,11 +292,15 @@ if ($purgeChanged) {
              . ((int) $result['products'] > count($result['productIds']) ? ', ...' : '');
     };
     // Pages purgees par les commandes confirmees et les enregistrements de l'administration
-    // depuis le passage precedent.
+    // depuis le passage precedent, puis variantes du rebuild dans lesquelles tout est rechauffe.
     $queueNote = function ($result) use ($dryRun) {
         if (!empty($result['queued'])) {
             lsc_out('  file (commandes, administration) : ' . (int) $result['queued'] . ' page(s) '
                   . ($dryRun ? 'en attente de rechauffage' : 'rechauffee(s)'));
+        }
+        if (!empty($result['urls']) && !empty($result['passes'])) {
+            lsc_out('  variantes : defaut + ' . implode(', ', $result['passes'])
+                  . ($dryRun ? ' (au vrai passage)' : ''));
         }
     };
 

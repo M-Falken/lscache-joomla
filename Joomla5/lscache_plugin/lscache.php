@@ -58,6 +58,9 @@ class plgSystemLSCache extends CMSPlugin {
     // Un cron --purge-changed passe pour actif s'il a vide la file dans ce delai : une
     // tache horaire compte encore, une tache arretee non - sa file ne serait plus videe.
     const REWARM_CRON_FRESH = 3900;
+    // Passes du rebuild rejouees par le rechauffage de --purge-changed : celles vues dans
+    // l'historique sur huit jours, pour qu'une passe hebdomadaire compte aussi.
+    const REWARM_PASS_WINDOW = 691200;
     const CATEGORY_CONTEXTS = array('com_categories.category', 'com_banners.category', 'com_contact.category', 'com_content.category', 'com_newsfeeds.category', 'com_users.category',
         'com_categories.categories', 'com_banners.categories', 'com_contact.categories', 'com_content.categories', 'com_newsfeeds.categories', 'com_users.categories');
     const CONTENT_CONTEXTS = array('com_content.article', 'com_content.featured', 'com_content.form', 'com_banner.banner', 'com_contact.contact', 'com_contact.form', 'com_newsfeeds.newsfeed', 'com_content');
@@ -2677,7 +2680,8 @@ class plgSystemLSCache extends CMSPlugin {
 
     /**
      * Réchauffe en une seule passe les pages purgées par --purge-changed et celles que
-     * les commandes confirmées ont mises en file (purgeDeferred()).
+     * les commandes confirmées et les enregistrements de l'administration ont mises en
+     * file (purgeDeferred()), dans chaque variante que le rebuild préchauffe.
      */
     private function rewarm(array $result, $dryRun) {
         $queued = $this->takeRewarmQueue(!$dryRun);
@@ -2696,11 +2700,61 @@ class plgSystemLSCache extends CMSPlugin {
         $result['queued'] = count($queued);
         $result['urls']   = array_values(array_unique(array_merge($result['urls'] ?? array(), $routed)));
 
+        // Une purge par tag vide tous les compartiments de vary, et seul celui des
+        // visiteurs sans cookie etait rechauffe : ceux qui avaient repondu au bandeau de
+        // consentement retrouvaient ces pages froides jusqu'a la reconstruction de nuit.
+        $passes = $this->getRebuildPasses();
+        $result['passes'] = array();
+        foreach ($passes as $pass) {
+            $result['passes'][] = ($pass['label'] !== '') ? $pass['label'] : trim($pass['cookie'] . ' ' . $pass['agent']);
+        }
+
         if ((!$dryRun) && (!empty($result['urls']))) {
             usleep(100000);
             $this->crawlUrls($result['urls'], false, true, false, false);
+            foreach ($passes as $pass) {
+                $this->crawlUrls($result['urls'], false, true, false, false, $pass['cookie'], $pass['label'], $pass['agent']);
+            }
         }
         return $result;
+    }
+
+    /**
+     * Passes du rebuild hors compartiment par defaut (cookies de consentement, agent
+     * mobile) qui ont abouti ces huit derniers jours, lues dans son historique.
+     *
+     * Les lire la plutot que les configurer une seconde fois garantit que le rechauffage
+     * suit les memes compartiments que la reconstruction : une passe ajoutee ou retiree
+     * du cron l'est aussi ici, sans autre reglage.
+     *
+     * @return  array  [['cookie' => string, 'agent' => string, 'label' => string], ...]
+     */
+    private function getRebuildPasses() {
+        $history = json_decode((string) @file_get_contents($this->getHistoryFile()), true);
+        if (!is_array($history)) {
+            return array();
+        }
+
+        $since  = time() - self::REWARM_PASS_WINDOW;
+        $passes = array();
+        foreach ($history as $entry) {
+            if ((!is_array($entry)) || (($entry['status'] ?? '') !== 'completed')
+                || ((int) ($entry['started'] ?? 0) < $since)) {
+                continue;
+            }
+            $cookie = trim((string) ($entry['cookie'] ?? ''));
+            $agent  = trim((string) ($entry['agent'] ?? ''));
+            // Compartiment par defaut : deja rechauffe par le premier crawl.
+            if (($cookie === '') && ($agent === '')) {
+                continue;
+            }
+            $key = $cookie . '|' . $agent;
+            if (!isset($passes[$key])) {
+                $passes[$key] = array('cookie' => $cookie, 'agent' => $agent,
+                                      'label' => trim((string) ($entry['label'] ?? '')));
+            }
+        }
+        return array_values($passes);
     }
 
     /**

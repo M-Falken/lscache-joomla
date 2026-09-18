@@ -50,8 +50,9 @@
  *                             serait purgé, sans rien toucher) et --list. Un passage qui
  *                             trouve le précédent encore en cours s'arrête sans erreur
  *                             (code 0) : le suivant rattrapera. Réchauffe aussi, dans la
- *                             même passe, les pages que les commandes confirmées ont
- *                             purgées et mises en file.
+ *                             même passe, les pages que les commandes confirmées et les
+ *                             enregistrements de produits de l'administration ont purgées
+ *                             et mises en file.
  *   --limit=N                 Ne traite que les N premières URLs (test de fumée).
  *   --quiet                   N'affiche que les erreurs. À utiliser en cron.
  *   --help                    Affiche cette aide.
@@ -288,10 +289,11 @@ if ($purgeChanged) {
         return '  produits : ' . implode(', ', $result['productIds'])
              . ((int) $result['products'] > count($result['productIds']) ? ', ...' : '');
     };
-    // Pages purgees par les commandes confirmees depuis le passage precedent.
+    // Pages purgees par les commandes confirmees et les enregistrements de l'administration
+    // depuis le passage precedent.
     $queueNote = function ($result) use ($dryRun) {
         if (!empty($result['queued'])) {
-            lsc_out('  file des commandes : ' . (int) $result['queued'] . ' page(s) '
+            lsc_out('  file (commandes, administration) : ' . (int) $result['queued'] . ' page(s) '
                   . ($dryRun ? 'en attente de rechauffage' : 'rechauffee(s)'));
         }
     };

@@ -55,6 +55,9 @@ class plgSystemLSCache extends CMSPlugin {
     // identifiants gardes par ligne. Le total de la ligne, lui, reste exact.
     const TARGETED_PURGE_HISTORY = 20;
     const TARGETED_PURGE_IDS = 50;
+    // Un cron --purge-changed passe pour actif s'il a vide la file dans ce delai : une
+    // tache horaire compte encore, une tache arretee non - sa file ne serait plus videe.
+    const REWARM_CRON_FRESH = 3900;
     const CATEGORY_CONTEXTS = array('com_categories.category', 'com_banners.category', 'com_contact.category', 'com_content.category', 'com_newsfeeds.category', 'com_users.category',
         'com_categories.categories', 'com_banners.categories', 'com_contact.categories', 'com_content.categories', 'com_newsfeeds.categories', 'com_users.categories');
     const CONTENT_CONTEXTS = array('com_content.article', 'com_content.featured', 'com_content.form', 'com_banner.banner', 'com_contact.contact', 'com_contact.form', 'com_newsfeeds.newsfeed', 'com_content');
@@ -2552,6 +2555,12 @@ class plgSystemLSCache extends CMSPlugin {
             $result = $this->purgeChangedProducts($vm, $snapshotFile, (bool) $dryRun);
             // Une purge refusee laisse la file intacte : le passage suivant la reprendra.
             if ($result['status'] !== 'error') {
+                // Signe de vie lu par isRewarmCronActive() : les enregistrements de
+                // l'administration ne confient leur rechauffage a la file que si un
+                // passage vient la vider. Pose avant le crawl, qui peut durer.
+                if (!$dryRun) {
+                    @touch($snapshotFile . '.lock');
+                }
                 $result = $this->rewarm($result, (bool) $dryRun);
             }
             $result['seconds'] = time() - $started;
@@ -2699,22 +2708,37 @@ class plgSystemLSCache extends CMSPlugin {
      * en cours ; les URLs vont dans la file que --purge-changed réchauffe à son passage.
      *
      * Destinée aux purges déclenchées dans le parcours d'un client (confirmation de
-     * commande). purgeAction() y appelait le site lui-même en HTTP, sans délai maximal,
-     * puis réchauffait les pages dans la même requête : autant d'attente pour le client.
-     * Sur MGF cet appel partait de plus sans agent et le pare-feu du site le refusait
-     * (403) - seule la purge par en-tête, faite ici directement, avait donc lieu.
+     * commande), et aux enregistrements de produits de l'administration quand le cron
+     * vide la file (isRewarmCronActive()). purgeAction() y appelait le site lui-même en
+     * HTTP, puis réchauffait les pages dans la même requête : autant d'attente pour le
+     * client, ou pour l'administrateur à chaque enregistrement. Sur MGF cet appel partait
+     * de plus sans agent et le pare-feu du site le refusait (403) - seule la purge par
+     * en-tête, faite ici directement, avait donc lieu.
+     *
+     * @param   array   $urls    Pages à réchauffer, non routées.
+     * @param   string  $source  Origine consignée pour l'encadré de diagnostic ('order'),
+     *                           vide pour la déduire de la requête.
      */
-    public function purgeDeferred(array $urls) {
+    public function purgeDeferred(array $urls, $source = '') {
         if (count($this->purgeObject->tags) < 1) {
             return;
         }
         $serveStale = $this->settings->get('serveStale', 1);
         $this->lscInstance->purgePublic(implode(',', $this->purgeObject->tags), $serveStale);
         $this->log();
-        $this->recordTargetedPurge($this->purgeObject->tags, 'order');
+        $this->recordTargetedPurge($this->purgeObject->tags, $source);
         if ($this->purgeObject->autoRecache > 0) {
             $this->queueRewarm($urls);
         }
+    }
+
+    /**
+     * Un cron --purge-changed vide-t-il la file de réchauffage ? Chacun de ses passages
+     * touche le verrou de l'instantané de stock avant de la vider.
+     */
+    public function isRewarmCronActive() {
+        $mtime = @filemtime($this->getStockSnapshotFile() . '.lock');
+        return ($mtime !== false) && ((time() - $mtime) <= self::REWARM_CRON_FRESH);
     }
 
     /**

@@ -94,27 +94,7 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
             $data = $data->getArgument('0');
         }
 
-        // Une declinaison s'affiche aussi sur la fiche de son parent (selecteur, prix, stock)
-        // et, a travers lui, dans les listes de ses categories, qu'elle n'a en general pas.
-        // Seules les commandes et --purge-changed purgeaient le parent jusqu'ici.
-        $productIds = array((int) $product_data->virtuemart_product_id);
-        $productIds = array_values(array_unique(array_merge($productIds, $this->getParentIds($productIds))));
-
-        $tag = "com_virtuemart" . $this->getProductCategoryTags($productIds);
-        foreach ($productIds as $pid) {
-            $tag .= ", com_virtuemart.product:" . $pid;
-        }
-        $this->plugin->purgeObject->tags[] = $tag;
-        if($this->plugin->purgeObject->autoRecache==0){
-            $this->plugin->purgeAction();
-            return;
-        }
-        $this->plugin->purgeObject->urls = $this->getProductCategoryUrls($productIds);
-        foreach ($productIds as $pid) {
-            $this->plugin->purgeObject->urls[] = 'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $pid . '&virtuemart_category_id=0';
-        }
-        $this->plugin->purgeAction();
-
+        $this->purgeProducts(array((int) $product_data->virtuemart_product_id));
     }
 
     public function plgVmOnDeleteProduct($id, $ok=true)
@@ -126,16 +106,9 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
         if (!$ok) {
             return;
         }
-        $category_tag = $this->getProductCategoryTags($id);
-        $tag = "com_virtuemart, com_virtuemart.product:" . $id . $category_tag;
-        $this->plugin->purgeObject->tags[] = $tag;
-        if($this->plugin->purgeObject->autoRecache==0){
-            $this->plugin->purgeAction();
-            return;
-        }
-        $this->plugin->purgeObject->urls = $this->getProductCategoryUrls($id);
-        $this->plugin->purgeObject->urls[] = 'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $id.'&virtuemart_category_id=0';
-        $this->plugin->purgeAction();
+        // Rien a rechauffer : la fiche n'existe plus, et VirtueMart a deja efface ses liens
+        // de categorie. Les listes qui l'affichaient portent son etiquette de produit.
+        $this->purgeProducts(array((int) $id));
     }
 
     public function plgVmAfterStoreCategory($data, $table=null)
@@ -289,21 +262,53 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
      */
     private function purgeOrderedProducts(array $productIds)
     {
+        // Une commande ne rechauffe jamais dans la requete du client, cron actif ou non.
+        $this->purgeProducts($productIds, 'order', false);
+    }
+
+    /**
+     * Purge les pages de produits : fiches, listes de leurs categories, pages VirtueMart
+     * sans contexte propre, et toute page qui les affiche (getDisplayedProductTags()).
+     *
+     * La purge part aussitot par en-tete, et le rechauffage va dans la file que le cron
+     * --purge-changed vide a son passage suivant, sur les URLs de getProductRefresh() -
+     * sous l'Itemid herite, comme la reconstruction de nuit. Rien n'attend dans la
+     * requete. purgeAction() rechauffait pendant l'enregistrement lui-meme, jusqu'a la
+     * « Duree maximale » du recache automatique, et chaque modification en ligne de
+     * com_vminventory aurait attendu autant. Sur MGF son appel HTTP partait de plus sans
+     * agent, le pare-feu le refusait (403), et rien n'etait jamais rechauffe.
+     *
+     * Sans cron actif, la file ne serait jamais videe : purgeAction() reprend alors, avec
+     * son rechauffage immediat - sauf pour une commande ($canWait faux), qui n'attend pas.
+     *
+     * @param   array    $productIds  Produits modifies ; leurs parents s'y ajoutent.
+     * @param   string   $source      Origine consignee pour l'encadre de diagnostic.
+     * @param   boolean  $canWait     Faux si la requete ne doit jamais rechauffer elle-meme.
+     */
+    private function purgeProducts(array $productIds, $source = '', $canWait = true)
+    {
         $productIds = array_values(array_unique(array_filter(array_map('intval', $productIds))));
         if (empty($productIds)) {
             return;
         }
 
-        // Une declinaison n'a en general pas de categorie propre : c'est son parent qui
-        // figure dans les listes, et dont la disponibilite affichee peut changer.
+        // Une declinaison s'affiche aussi sur la fiche de son parent (selecteur, prix,
+        // stock) et, a travers lui, dans les listes de ses categories, qu'elle n'a en
+        // general pas.
         $productIds = array_values(array_unique(array_merge($productIds, $this->getParentIds($productIds))));
 
         $refresh = $this->getProductRefresh($productIds);
 
         // « com_virtuemart » : pages VirtueMart sans contexte propre (accueil boutique,
-        // fabricants...), qui peuvent lister le produit. Deja purgees avant ce changement.
+        // fabricants...), qui peuvent lister le produit.
         $this->plugin->purgeObject->tags[] = implode(',', array_merge(array('com_virtuemart'), $refresh['tags']));
-        $this->plugin->purgeDeferred($refresh['urls']);
+
+        if ((!$canWait) || $this->plugin->isRewarmCronActive()) {
+            $this->plugin->purgeDeferred($refresh['urls'], $source);
+            return;
+        }
+        $this->plugin->purgeObject->urls = $refresh['urls'];
+        $this->plugin->purgeAction();
     }
 
     private function getParentIds(array $productIds)
@@ -381,23 +386,7 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
             return;
         }
 
-        $tag = "com_virtuemart" . $this->getProductCategoryTags($productIds);
-        foreach ($productIds as $pid) {
-            $tag .= ", com_virtuemart.product:" . $pid;
-        }
-        $this->plugin->purgeObject->tags[] = $tag;
-
-        if ($this->plugin->purgeObject->autoRecache == 0) {
-            $this->plugin->purgeAction();
-            return;
-        }
-
-        $urls = $this->getProductCategoryUrls($productIds);
-        foreach ($productIds as $pid) {
-            $urls[] = 'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $pid . '&virtuemart_category_id=0';
-        }
-        $this->plugin->purgeObject->urls = $urls;
-        $this->plugin->purgeAction();
+        $this->purgeProducts($productIds);
     }
 
     public function onPurgeContent($context, $row)
@@ -532,35 +521,6 @@ class LSCacheComponentVirtueMart extends LSCacheComponentBase
         $db->setQuery($query);
         $result = $db->loadObjectList();
         return $result;
-    }
-    
-    private function getProductCategoryTags($productid)
-    {
-        $categories = $this->getProductCategories($productid);
-        $tags = "";
-        if (count($categories)) {
-            foreach ($categories as $category) {
-                $tags .= ",com_virtuemart.category:" . $category->virtuemart_category_id;
-            }
-        }
-        return $tags;
-    }
-
-    private function getProductCategoryUrls($productid)
-    {
-        $categories = $this->getProductCategories($productid);
-        $urls = array();
-        $catids = array();
-        if (count($categories)) {
-            foreach ($categories as $category) {
-                $urls[] =  'index.php?option=com_virtuemart&view=productdetails&virtuemart_product_id=' . $category->virtuemart_product_id.'&virtuemart_category_id='.$category->virtuemart_category_id;
-                if(!in_array($category->virtuemart_category_id, $catids)){
-                    $urls[] = 'index.php?option=com_virtuemart&view=category&virtuemart_category_id='.$category->virtuemart_category_id;
-                    $catids[] = $category->virtuemart_category_id;
-                }
-            }
-        }
-        return $urls;
     }
     
     /**

@@ -182,53 +182,106 @@ $badge      = $stateClass[$coverage['state']] ?? 'secondary';
 
         <hr>
 
-        <?php $purges = $diag['purges']; ?>
-        <p class="mb-2">
-            <strong><?php echo Text::_('COM_LSCACHE_VARY_DIAG_PURGES_TITLE'); ?></strong>
-            <?php if ($purges['last24h'] > 0) : ?>
-                <span class="badge bg-<?php echo $purges['alert'] ? 'danger' : 'secondary'; ?> ms-2">
-                    <?php echo Text::sprintf('COM_LSCACHE_VARY_DIAG_PURGES_COUNT', (int) $purges['last24h']); ?>
-                </span>
-            <?php endif; ?>
-        </p>
-
-        <?php if (empty($purges['entries'])) : ?>
-            <p class="text-muted mb-0"><?php echo Text::_('COM_LSCACHE_VARY_DIAG_PURGES_NONE'); ?></p>
-        <?php else : ?>
-            <ul class="list-unstyled small mb-2">
-            <?php foreach ($purges['entries'] as $p) : ?>
-                <li class="mb-1 d-flex align-items-start">
-                    <span class="d-inline-flex align-items-center flex-shrink-0" style="gap:.5rem;">
-                        <span class="d-inline-block" style="min-width:4rem;">
-                            <?php echo HTMLHelper::_('date', gmdate('Y-m-d H:i:s', $p['time']), 'd/m H:i'); ?>
+        <?php $purges   = $diag['purges']; ?>
+        <?php $targeted = $diag['targeted']; ?>
+        <?php // Colonnes selon la largeur de l'encadre, et non de l'ecran : il partage deja
+              // sa ligne avec l'historique des reconstructions. ?>
+        <div class="d-flex flex-wrap" style="gap:1rem 2rem;">
+            <div style="flex:1 1 300px; min-width:0;">
+                <p class="mb-2">
+                    <strong><?php echo Text::_('COM_LSCACHE_VARY_DIAG_PURGES_TITLE'); ?></strong>
+                    <?php if ($purges['last24h'] > 0) : ?>
+                        <span class="badge bg-<?php echo $purges['alert'] ? 'danger' : 'secondary'; ?> ms-2">
+                            <?php echo Text::sprintf('COM_LSCACHE_VARY_DIAG_PURGES_COUNT', (int) $purges['last24h']); ?>
                         </span>
-                        <span class="badge bg-<?php echo $p['origin'] === 'site' ? 'warning' : 'secondary'; ?>">
-                            <?php echo Text::_('COM_LSCACHE_VARY_DIAG_ORIGIN_' . strtoupper($p['origin'])); ?>
-                        </span>
-                    </span>
-                    <span class="text-muted ms-2" style="min-width:0;"><?php echo htmlspecialchars($p['detail'], ENT_QUOTES, 'UTF-8'); ?></span>
-                </li>
-            <?php endforeach; ?>
-            </ul>
-
-            <?php if ($purges['interval'] !== null) : ?>
-                <p class="text-muted mb-1">
-                    <?php echo Text::sprintf('COM_LSCACHE_VARY_DIAG_PURGES_INTERVAL',
-                        round($purges['interval'] / 3600, 1), round($purges['ttl'] / 3600, 1)); ?>
-                </p>
-            <?php endif; ?>
-
-            <?php // Hors du test sur l'intervalle : une seule purge suffit a alerter. ?>
-            <?php if ($purges['alert']) : ?>
-                <p class="text-danger mb-0">
-                    <?php echo Text::sprintf('COM_LSCACHE_VARY_DIAG_PURGES_ALERT', (int) $purges['siteCount']); ?>
-                    <?php if (!empty($purges['rebuild'])) : ?>
-                        <?php echo ' ' . Text::sprintf('COM_LSCACHE_VARY_DIAG_PURGES_COST',
-                            LSCacheVaryDiagnostic::formatDuration($purges['rebuild'])); ?>
                     <?php endif; ?>
                 </p>
+
+                <?php if (empty($purges['entries'])) : ?>
+                    <p class="text-muted mb-0"><?php echo Text::_('COM_LSCACHE_VARY_DIAG_PURGES_NONE'); ?></p>
+                <?php else : ?>
+                    <ul class="list-unstyled small mb-2">
+                    <?php foreach ($purges['entries'] as $p) : ?>
+                        <li class="mb-1 d-flex align-items-start">
+                            <span class="d-inline-flex align-items-center flex-shrink-0" style="gap:.5rem;">
+                                <span class="d-inline-block" style="min-width:4rem;">
+                                    <?php echo HTMLHelper::_('date', gmdate('Y-m-d H:i:s', $p['time']), 'd/m H:i'); ?>
+                                </span>
+                                <span class="badge bg-<?php echo $p['origin'] === 'site' ? 'warning' : 'secondary'; ?>">
+                                    <?php echo Text::_('COM_LSCACHE_VARY_DIAG_ORIGIN_' . strtoupper($p['origin'])); ?>
+                                </span>
+                            </span>
+                            <span class="text-muted ms-2" style="min-width:0;"><?php echo htmlspecialchars($p['detail'], ENT_QUOTES, 'UTF-8'); ?></span>
+                        </li>
+                    <?php endforeach; ?>
+                    </ul>
+
+                    <?php if ($purges['interval'] !== null) : ?>
+                        <p class="text-muted mb-1">
+                            <?php echo Text::sprintf('COM_LSCACHE_VARY_DIAG_PURGES_INTERVAL',
+                                round($purges['interval'] / 3600, 1), round($purges['ttl'] / 3600, 1)); ?>
+                        </p>
+                    <?php endif; ?>
+
+                    <?php // Hors du test sur l'intervalle : une seule purge suffit a alerter. ?>
+                    <?php if ($purges['alert']) : ?>
+                        <p class="text-danger mb-0">
+                            <?php echo Text::sprintf('COM_LSCACHE_VARY_DIAG_PURGES_ALERT', (int) $purges['siteCount']); ?>
+                            <?php if (!empty($purges['rebuild'])) : ?>
+                                <?php echo ' ' . Text::sprintf('COM_LSCACHE_VARY_DIAG_PURGES_COST',
+                                    LSCacheVaryDiagnostic::formatDuration($purges['rebuild'])); ?>
+                            <?php endif; ?>
+                        </p>
+                    <?php endif; ?>
+                <?php endif; ?>
+            </div>
+
+            <?php if ($targeted['available'] || !empty($targeted['entries'])) : ?>
+            <div style="flex:1 1 300px; min-width:0;">
+                <p class="mb-2">
+                    <strong><?php echo Text::_('COM_LSCACHE_VARY_DIAG_TARGETED_TITLE'); ?></strong>
+                    <?php if ($targeted['last24h'] > 0) : ?>
+                        <span class="badge bg-secondary ms-2">
+                            <?php echo Text::sprintf('COM_LSCACHE_VARY_DIAG_PURGES_COUNT', (int) $targeted['last24h']); ?>
+                        </span>
+                    <?php endif; ?>
+                </p>
+
+                <?php if (empty($targeted['entries'])) : ?>
+                    <p class="text-muted mb-0"><?php echo Text::_('COM_LSCACHE_VARY_DIAG_TARGETED_NONE'); ?></p>
+                <?php else : ?>
+                    <ul class="list-unstyled small mb-2">
+                    <?php foreach ($targeted['entries'] as $p) : ?>
+                        <?php $source = in_array($p['source'], array('order', 'stock'), true)
+                            ? Text::_('COM_LSCACHE_VARY_DIAG_TARGETED_SOURCE_' . strtoupper($p['source'])) : $p['detail']; ?>
+                        <li class="mb-1 d-flex align-items-start">
+                            <span class="d-inline-flex align-items-center flex-shrink-0" style="gap:.5rem;">
+                                <span class="d-inline-block" style="min-width:4rem;">
+                                    <?php echo HTMLHelper::_('date', gmdate('Y-m-d H:i:s', $p['time']), 'd/m H:i'); ?>
+                                </span>
+                                <?php // Une purge venue d'une page publique est ici une commande : rien d'alarmant. ?>
+                                <span class="badge bg-<?php echo $p['origin'] === 'site' ? 'info' : 'secondary'; ?>">
+                                    <?php echo Text::_('COM_LSCACHE_VARY_DIAG_ORIGIN_' . strtoupper($p['origin'])); ?>
+                                </span>
+                            </span>
+                            <span class="ms-2" style="min-width:0;">
+                                <span title="<?php echo htmlspecialchars(implode(', ', $p['names']), ENT_QUOTES, 'UTF-8'); ?>">
+                                    <?php echo htmlspecialchars(implode(', ', array_slice($p['names'], 0, LSCacheVaryDiagnostic::TARGETED_NAMED)), ENT_QUOTES, 'UTF-8'); ?>
+                                    <?php if ($p['more'] > 0) : ?>
+                                        <?php echo Text::plural('COM_LSCACHE_VARY_DIAG_TARGETED_MORE', (int) $p['more']); ?>
+                                    <?php endif; ?>
+                                </span>
+                                <span class="d-block text-muted"><?php echo htmlspecialchars($source, ENT_QUOTES, 'UTF-8'); ?></span>
+                            </span>
+                        </li>
+                    <?php endforeach; ?>
+                    </ul>
+
+                    <p class="text-muted mb-0"><?php echo Text::_('COM_LSCACHE_VARY_DIAG_TARGETED_NOTE'); ?></p>
+                <?php endif; ?>
+            </div>
             <?php endif; ?>
-        <?php endif; ?>
+        </div>
 
         <hr>
 

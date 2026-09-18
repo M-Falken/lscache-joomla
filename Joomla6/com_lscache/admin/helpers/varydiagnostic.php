@@ -21,7 +21,10 @@ defined('_JEXEC') or die;
 
 use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\Factory;
+use Joomla\CMS\Language\Text;
+use Joomla\CMS\Log\Log;
 use Joomla\CMS\Plugin\PluginHelper;
+use Joomla\Database\DatabaseInterface;
 
 class LSCacheVaryDiagnostic
 {
@@ -40,6 +43,17 @@ class LSCacheVaryDiagnostic
     // Un meme declencheur (nettoyage JSpeed relance sur deux pages visitees coup sur coup)
     // en produit souvent plusieurs en rafale.
     const PURGE_GROUP_SECONDS = 900;
+
+    /**
+     * Purges de produits affichées : autant de lignes que la liste des purges globales,
+     * qu'elle côtoie.
+     */
+    const TARGETED_SHOWN = 6;
+
+    /**
+     * Produits nommés par ligne ; les suivants sont comptés, et listés au survol.
+     */
+    const TARGETED_NAMED = 3;
 
     /**
      * Assemble l'état complet à afficher.
@@ -71,6 +85,7 @@ class LSCacheVaryDiagnostic
             'coverage'    => self::coverage($params, $consent, $device),
             'doubleCache' => PluginHelper::isEnabled('system', 'cache'),
             'purges'      => self::purges($params),
+            'targeted'    => self::targetedPurges(),
             'cliPath'     => JPATH_PLUGINS . '/system/lscache/cli/rebuild.php',
             'phpBinary'   => self::phpBinary(),
         );
@@ -651,6 +666,153 @@ class LSCacheVaryDiagnostic
             // Une seule suffit a la signaler, meme si le rythme parait supportable.
             'alert'    => ($siteCount > 0),
         );
+    }
+
+    /**
+     * Produits purgés récemment, écrits par plgSystemLSCache::recordTargetedPurge().
+     *
+     * Répond à la question la plus fréquente d'un marchand : « j'ai changé le prix et le
+     * client voit l'ancien ». La ligne dit si la purge a eu lieu, quand et d'où elle vient.
+     * Les noms sont lus à l'affichage et non à la purge : l'enregistrement d'un produit ne
+     * paie aucune requête de plus, et un produit renommé depuis apparaît sous son nom actuel.
+     */
+    private static function targetedPurges()
+    {
+        $result = array(
+            // Colonne affichée dès que VirtueMart est là, même vide : son absence laisserait
+            // croire que les purges de produits ne sont pas suivies.
+            'available' => ComponentHelper::isEnabled('com_virtuemart'),
+            'entries'   => array(),
+            'last24h'   => 0,
+        );
+
+        $file  = self::tmpFile('lscache_targeted_purges.json');
+        $histo = is_readable($file) ? json_decode((string) file_get_contents($file), true) : null;
+
+        if (!is_array($histo)) {
+            return $result;
+        }
+
+        $seuil = time() - 86400;
+        $ids   = array();
+
+        foreach ($histo as $e) {
+            if ((!is_array($e)) || empty($e['time']) || (!is_array($e['products'] ?? null))) {
+                continue;
+            }
+
+            $vm = array_values(array_filter(array_map('intval',
+                (array) ($e['products']['com_virtuemart'] ?? array()))));
+
+            if (empty($vm)) {
+                continue;
+            }
+
+            if ((int) $e['time'] > $seuil) {
+                $result['last24h']++;
+            }
+
+            if (count($result['entries']) >= self::TARGETED_SHOWN) {
+                continue;
+            }
+
+            $client = (string) ($e['client'] ?? '');
+            $detail = array_filter(array((string) ($e['option'] ?? ''), (string) ($e['view'] ?? ''),
+                                         (string) ($e['task'] ?? '')));
+
+            $result['entries'][] = array(
+                'time'   => (int) $e['time'],
+                'origin' => in_array($client, array('site', 'administrator', 'cli'), true) ? $client : 'cli',
+                'source' => (string) ($e['source'] ?? ''),
+                'detail' => implode(' ', $detail),
+                'ids'    => $vm,
+                // Le plugin ne garde qu'une partie des identifiants d'une purge massive.
+                'total'  => max(count($vm), (int) ($e['total'] ?? 0)),
+            );
+            $ids = array_merge($ids, $vm);
+        }
+
+        $names = self::vmProductNames($ids);
+
+        foreach ($result['entries'] as &$entry) {
+            $labels = array();
+            foreach ($entry['ids'] as $id) {
+                $labels[] = $names[$id] ?? Text::sprintf('COM_LSCACHE_VARY_DIAG_TARGETED_UNKNOWN', $id);
+            }
+
+            // Une déclinaison porte le nom de son parent, purgé avec elle : un seul libellé.
+            $entry['names'] = array_values(array_unique($labels));
+            $entry['more']  = max(0, $entry['total'] - count($entry['ids']))
+                            + max(0, count($entry['names']) - self::TARGETED_NAMED);
+            unset($entry['ids']);
+        }
+        unset($entry);
+
+        return $result;
+    }
+
+    /**
+     * Noms des produits VirtueMart, lus dans ses tables de textes par langue
+     * (#__virtuemart_products_fr_fr...) : la langue par défaut du site d'abord, puis les
+     * autres pour un produit qui n'y serait pas traduit.
+     *
+     * @return  array  [id => nom] ; un produit supprimé depuis n'y figure pas.
+     */
+    private static function vmProductNames(array $ids)
+    {
+        $ids   = array_values(array_unique(array_filter(array_map('intval', $ids))));
+        $names = array();
+
+        if (empty($ids)) {
+            return $names;
+        }
+
+        try {
+            $db     = Factory::getContainer()->get(DatabaseInterface::class);
+            $prefix = $db->getPrefix() . 'virtuemart_products_';
+            $site   = strtolower(str_replace('-', '_',
+                (string) ComponentHelper::getParams('com_languages')->get('site', 'en-GB')));
+
+            $tables = array();
+
+            foreach ($db->getTableList() as $table) {
+                $lang = substr((string) $table, strlen($prefix));
+
+                if ((strpos((string) $table, $prefix) === 0) && preg_match('/^[a-z]{2,3}_[a-z]{2}$/', $lang)) {
+                    $tables[$lang] = $table;
+                }
+            }
+
+            if (isset($tables[$site])) {
+                $tables = array($site => $tables[$site]) + $tables;
+            }
+
+            foreach ($tables as $table) {
+                $missing = array_values(array_diff($ids, array_keys($names)));
+
+                if (empty($missing)) {
+                    break;
+                }
+
+                $query = $db->createQuery()
+                    ->select($db->quoteName(array('virtuemart_product_id', 'product_name')))
+                    ->from($db->quoteName($table))
+                    ->whereIn($db->quoteName('virtuemart_product_id'), $missing);
+
+                foreach ((array) $db->setQuery($query)->loadObjectList() as $row) {
+                    if (trim((string) $row->product_name) !== '') {
+                        $names[(int) $row->virtuemart_product_id] = (string) $row->product_name;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // Sans noms, chaque produit s'affiche sous son numéro ; la cause, elle, reste
+            // consignée.
+            Log::add($e->getMessage() . ' [' . basename($e->getFile()) . ':' . $e->getLine() . ']',
+                Log::WARNING, 'LiteSpeedCache');
+        }
+
+        return $names;
     }
 
     /**

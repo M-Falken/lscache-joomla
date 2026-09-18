@@ -51,6 +51,10 @@ class plgSystemLSCache extends CMSPlugin {
     // Plafond de la file de rechauffage des commandes : sans cron --purge-changed pour
     // la vider, elle ne doit pas grossir indefiniment.
     const REWARM_QUEUE_MAX = 2000;
+    // Historique des purges de produits de l'encadre de diagnostic : lignes conservees, et
+    // identifiants gardes par ligne. Le total de la ligne, lui, reste exact.
+    const TARGETED_PURGE_HISTORY = 20;
+    const TARGETED_PURGE_IDS = 50;
     const CATEGORY_CONTEXTS = array('com_categories.category', 'com_banners.category', 'com_contact.category', 'com_content.category', 'com_newsfeeds.category', 'com_users.category',
         'com_categories.categories', 'com_banners.categories', 'com_contact.categories', 'com_content.categories', 'com_newsfeeds.categories', 'com_users.categories');
     const CONTENT_CONTEXTS = array('com_content.article', 'com_content.featured', 'com_content.form', 'com_banner.banner', 'com_contact.contact', 'com_newsfeeds.newsfeed', 'com_content');
@@ -73,6 +77,10 @@ class plgSystemLSCache extends CMSPlugin {
     public $vary = array();
     public $cacheTags = array();
     public $purgeObject;
+    // Purge de produits en cours de consignation dans cette requete, voir recordTargetedPurge().
+    private $purgedProducts = array();
+    private $purgeRecordId = null;
+    private $purgeRecordTime = 0;
 
     /**
      * Read LSCache Settings.
@@ -2533,6 +2541,8 @@ class plgSystemLSCache extends CMSPlugin {
             return $result;
         }
 
+        $this->recordTargetedPurge($refresh['tags'], 'stock');
+
         // Le réchauffage vient ensuite, dans rewarm(), en une seule passe avec les pages
         // que les commandes ont mises en file.
         $result['status'] = 'purged';
@@ -2584,8 +2594,114 @@ class plgSystemLSCache extends CMSPlugin {
         $serveStale = $this->settings->get('serveStale', 1);
         $this->lscInstance->purgePublic(implode(',', $this->purgeObject->tags), $serveStale);
         $this->log();
+        $this->recordTargetedPurge($this->purgeObject->tags, 'order');
         if ($this->purgeObject->autoRecache > 0) {
             $this->queueRewarm($urls);
+        }
+    }
+
+    /**
+     * Consigne les produits d'une purge ciblee, pour l'encadre de diagnostic.
+     *
+     * Repond a « j'ai change le prix et le client voit l'ancien » : la purge a-t-elle eu
+     * lieu, quand, d'ou. Fichier distinct de lscache_purge_history.json : une purge de
+     * produit est le fonctionnement normal, elle n'entre ni dans l'alerte ni dans la
+     * moyenne des purges globales. On consigne la DEMANDE : LiteSpeed n'en accuse pas
+     * reception.
+     *
+     * Une ligne par requete. Un import com_vminventory enregistre un produit apres
+     * l'autre, et plgVmAfterStoreProduct() relance purgeAction() a chacun : deux mille
+     * lignes auraient chasse tout le reste de l'historique.
+     *
+     * Ne leve jamais d'exception : elle s'execute pendant la confirmation d'une commande.
+     *
+     * @param   array   $tags    Tags purges, chaque element pouvant en lister plusieurs.
+     * @param   string  $source  'order', 'stock', ou vide : la requete dit alors d'ou vient la purge.
+     */
+    private function recordTargetedPurge(array $tags, $source = '') {
+        try {
+            $found = false;
+            foreach ($tags as $group) {
+                foreach (explode(',', (string) $group) as $tag) {
+                    if (preg_match('/^(com_[a-z0-9_]+)\.product:(\d+)$/', trim($tag), $m)) {
+                        $this->purgedProducts[$m[1]][(int) $m[2]] = true;
+                        $found = true;
+                    }
+                }
+            }
+            if (!$found) {
+                return;
+            }
+
+            if ($this->purgeRecordId === null) {
+                $this->purgeRecordId   = bin2hex(random_bytes(6));
+                $this->purgeRecordTime = time();
+            }
+
+            // Le CLI tourne sous SiteApplication : isClient('site') y repondrait oui.
+            if (PHP_SAPI === 'cli') {
+                $client = 'cli';
+            } else if ($this->app->isClient('administrator')) {
+                $client = 'administrator';
+            } else {
+                $client = 'site';
+            }
+
+            $products = array();
+            $total    = 0;
+            foreach ($this->purgedProducts as $com => $ids) {
+                $products[$com] = array_slice(array_keys($ids), 0, self::TARGETED_PURGE_IDS);
+                $total += count($ids);
+            }
+
+            $input = $this->app->getInput();
+            $entry = array(
+                'rid'      => $this->purgeRecordId,
+                'time'     => $this->purgeRecordTime,
+                'client'   => $client,
+                'source'   => (string) $source,
+                'option'   => (string) $input->getCmd('option', ''),
+                'view'     => (string) $input->getCmd('view', ''),
+                'task'     => (string) $input->getCmd('task', ''),
+                'products' => $products,
+                'total'    => $total,
+            );
+
+            $tmp = (string) $this->app->get('tmp_path');
+            if (($tmp === '') || (!is_dir($tmp)) || (!is_writable($tmp))) {
+                $tmp = JPATH_ROOT . '/tmp';
+            }
+            $file  = rtrim($tmp, '/\\') . '/lscache_targeted_purges.json';
+            $raw   = @file_get_contents($file);
+            $histo = is_string($raw) ? json_decode($raw, true) : null;
+            $histo = is_array($histo) ? $histo : array();
+
+            $replaced = false;
+            foreach ($histo as $i => $e) {
+                if (is_array($e) && (($e['rid'] ?? '') === $this->purgeRecordId)) {
+                    $histo[$i] = $entry;
+                    $replaced  = true;
+                    break;
+                }
+            }
+            if (!$replaced) {
+                array_unshift($histo, $entry);
+            }
+
+            // Fichier temporaire renomme : deux commandes simultanees ne laissent jamais un
+            // JSON tronque, au pire l'une des deux lignes manque.
+            $json    = json_encode(array_slice($histo, 0, self::TARGETED_PURGE_HISTORY));
+            $partial = $file . '.' . $this->purgeRecordId;
+            if (($json !== false) && (@file_put_contents($partial, $json) !== false) && (!@rename($partial, $file))) {
+                @unlink($partial);
+            }
+        } catch (\Throwable $e) {
+            // Une purge faite prime sur sa trace, mais l'echec reste consigne. Journal
+            // protege lui aussi : un fichier de log inaccessible leve une exception.
+            try {
+                Log::add('recordTargetedPurge: ' . $e->getMessage(), Log::WARNING, 'LiteSpeedCache');
+            } catch (\Throwable $ignored) {
+            }
         }
     }
 
@@ -3251,6 +3367,10 @@ class plgSystemLSCache extends CMSPlugin {
     public function purgeAction() {
         if ((!$this->purgeObject->purgeAll) && (count($this->purgeObject->tags) < 1)) {
             return;
+        }
+
+        if (!$this->purgeObject->purgeAll) {
+            $this->recordTargetedPurge($this->purgeObject->tags);
         }
 
         $httpcode = 0;

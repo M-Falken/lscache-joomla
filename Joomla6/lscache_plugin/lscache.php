@@ -672,10 +672,7 @@ class plgSystemLSCache extends CMSPlugin {
         $cacheTags = implode(',', $this->cacheTags);
         //$this->debug(__FUNCTION__ . $cacheTags . var_export($this->pageElements,true) );
 
-        $cacheTimeout = $this->settings->get('cacheTimeout', 2000) * 60;
-        if ($this->menuItem && $this->menuItem->home) {
-            $cacheTimeout = $this->settings->get('homePageCacheTimeout', 2000) * 60;
-        }
+        $cacheTimeout = $this->getCacheTimeout();
 
         $content = $this->app->getBody();
         $token = Session::getFormToken();
@@ -1527,25 +1524,7 @@ class plgSystemLSCache extends CMSPlugin {
         }
 
         $exclusions = explode("\n", str_replace(array("\r\n", "\r"), "\n", $excludeURIs));
-        if (!$exclusions) {
-            return false;
-        }
-
-        $path = Uri::getInstance()->toString(array('path', 'query', 'fragment'));
-        foreach ($exclusions as $exclusion) {
-            if ($exclusion == '') {
-                continue;
-            }
-
-            if ((strpos($exclusion, '/') !== FALSE) && (strpos($exclusion, '\/') === FALSE)) {
-                $exclusion = str_replace('/', '\/', $exclusion);
-            }
-
-            if (preg_match('/' . $exclusion . '/is', $path)) {
-                return true;
-            }
-        }
-        return false;
+        return $this->matchesURIPatterns($exclusions);
     }
 
     protected function isLoginExcluded() {
@@ -1564,25 +1543,76 @@ class plgSystemLSCache extends CMSPlugin {
         }
 
         $exclusions = explode("\n", str_replace(array("\r\n", "\r"), "\n", $excludeURIs));
-        if (!$exclusions) {
-            return false;
-        }
+        return $this->matchesURIPatterns($exclusions);
+    }
 
+    /**
+     * Check if the current URI matches one of the given patterns.
+     *
+     * Patterns are substrings or regular expressions, matched against the
+     * path, query and fragment of the current URI (same syntax as "Exclude URLs").
+     *
+     * @param    array  $patterns  The patterns to test
+     *
+     * @return   boolean  True if one pattern matches
+     *
+     * @since    1.5.3
+     */
+    protected function matchesURIPatterns(array $patterns) {
         $path = Uri::getInstance()->toString(array('path', 'query', 'fragment'));
-        foreach ($exclusions as $exclusion) {
-            if ($exclusion == '') {
+        foreach ($patterns as $pattern) {
+            if ($pattern == '') {
                 continue;
             }
 
-            if ((strpos($exclusion, '/') !== FALSE) && (strpos($exclusion, '\/') === FALSE)) {
-                $exclusion = str_replace('/', '\/', $exclusion);
+            if ((strpos($pattern, '/') !== FALSE) && (strpos($pattern, '\/') === FALSE)) {
+                $pattern = str_replace('/', '\/', $pattern);
             }
 
-            if (preg_match('/' . $exclusion . '/is', $path)) {
+            if (preg_match('/' . $pattern . '/is', $path)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * Get the public cache TTL of the current page.
+     *
+     * The first matching rule of "Cache TTL Rules" wins, then the homepage TTL
+     * (on the homepage), then the global TTL.
+     *
+     * @return   integer  The TTL in seconds, 0 means the page is not cached
+     *
+     * @since    1.5.3
+     */
+    protected function getCacheTimeout() {
+        $rules = $this->settings->get('ttlRules', array());
+        // Subform values are decoded as objects from the component params
+        $rules = is_object($rules) ? get_object_vars($rules) : (array) $rules;
+        $menuId = ($this->menuItem && $this->menuItem->id) ? (int) $this->menuItem->id : 0;
+
+        foreach ($rules as $rule) {
+            $rule = (array) $rule;
+            if (!isset($rule['ttl']) || !is_numeric($rule['ttl'])) {
+                continue;
+            }
+
+            if (isset($rule['type']) && $rule['type'] === 'menu') {
+                $matched = $menuId && !empty($rule['menu']) && (int) $rule['menu'] === $menuId;
+            } else {
+                $matched = !empty($rule['url']) && $this->matchesURIPatterns(array(trim($rule['url'])));
+            }
+
+            if ($matched) {
+                return (int) $rule['ttl'] * 60;
+            }
+        }
+
+        if ($this->menuItem && $this->menuItem->home) {
+            return $this->settings->get('homePageCacheTimeout', 2000) * 60;
+        }
+        return $this->settings->get('cacheTimeout', 2000) * 60;
     }
 
     //ESI Render;

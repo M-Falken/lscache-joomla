@@ -55,6 +55,19 @@
         </field>
         
         <field name="homePageCacheTimeout" type="text" default="2000" label="COM_LSCACHE_FIELD_HOMEPAGE_TIMEOUT_LABEL" description="COM_LSCACHE_FIELD_HOMEPAGE_TIMEOUT_DESC"/>
+        <field name="ttlRules" type="subform" multiple="true" layout="joomla.form.field.subform.repeatable-table" label="COM_LSCACHE_FIELD_TTL_RULES_LABEL" description="COM_LSCACHE_FIELD_TTL_RULES_DESC">
+            <form>
+                <field name="type" type="list" default="url" label="COM_LSCACHE_FIELD_TTL_RULES_TYPE_LABEL">
+                    <option value="url">COM_LSCACHE_FIELD_TTL_RULES_TYPE_URL</option>
+                    <option value="menu">COM_LSCACHE_FIELD_TTL_RULES_TYPE_MENU</option>
+                </field>
+                <field name="url" type="text" filter="raw" showon="type:url" label="COM_LSCACHE_FIELD_TTL_RULES_URL_LABEL" hint="COM_LSCACHE_FIELD_TTL_RULES_URL_HINT"/>
+                <field name="menu" type="menuitem" published="1" clientId="0" showon="type:menu" label="COM_LSCACHE_FIELD_TTL_RULES_MENU_LABEL">
+                    <option value="">JSELECT</option>
+                </field>
+                <field name="ttl" type="number" min="0" default="2000" filter="integer" label="COM_LSCACHE_FIELD_TTL_RULES_TTL_LABEL"/>
+            </form>
+        </field>
         <field name="mobileCacheVary" type="radio" default="0" class="btn-group btn-group-yesno" label="COM_LSCACHE_FIELD_VARY_MOBILE_LABEL" description="COM_LSCACHE_FIELD_VARY_MOBILE_DESC">
             <option value="0">JDISABLED</option>
             <option value="1">JENABLED</option>

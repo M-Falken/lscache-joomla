@@ -180,6 +180,63 @@ $badge      = $stateClass[$coverage['state']] ?? 'secondary';
             </p>
         <?php endif; ?>
 
+        <?php // La couverture ci-dessus est DECLARATIVE : deduite de l'historique que CE
+              // plugin a lui-meme ecrit. Une purge passee par un canal hors de son controle
+              // (ex. suppression directe des fichiers cache sur disque par une extension
+              // tierce) n'y laisse aucune trace. Ce bouton sonde quelques pages reelles en
+              // HTTP et lit leur en-tete X-LiteSpeed-Cache : la seule verite terrain qui
+              // existe (LiteSpeed n'expose aucune API interrogeable depuis PHP). ?>
+        <p class="mt-2 mb-0">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="lscache-live-check">
+                <?php echo Text::_('COM_LSCACHE_VARY_DIAG_LIVECHECK_BTN'); ?>
+            </button>
+            <span id="lscache-live-check-result" class="ms-2 small text-muted"></span>
+        </p>
+        <script>
+        (function () {
+            var btn    = document.getElementById('lscache-live-check');
+            var result = document.getElementById('lscache-live-check-result');
+            if (!btn) { return; }
+
+            var libelles = {
+                checking: <?php echo json_encode(Text::_('COM_LSCACHE_VARY_DIAG_LIVECHECK_RUNNING')); ?>,
+                error:    <?php echo json_encode(Text::_('COM_LSCACHE_VARY_DIAG_LIVECHECK_ERROR')); ?>,
+                resultat: <?php echo json_encode(Text::_('COM_LSCACHE_VARY_DIAG_LIVECHECK_RESULT')); ?>
+            };
+
+            btn.addEventListener('click', function () {
+                btn.disabled = true;
+                result.className = 'ms-2 small text-muted';
+                result.textContent = libelles.checking;
+
+                fetch('index.php?option=com_ajax&plugin=lscache&group=system&format=json&checkNow=1', {cache: 'no-store'})
+                    .then(function (r) { return r.json(); })
+                    .then(function (resp) {
+                        var raw  = (resp && resp.data) ? resp.data : resp;
+                        var data = Array.isArray(raw) ? raw[0] : raw;
+                        btn.disabled = false;
+
+                        if (!data || data.status !== 'ok') {
+                            result.className = 'ms-2 small text-danger';
+                            result.textContent = libelles.error + ((data && data.error) ? ' (' + data.error + ')' : '');
+                            return;
+                        }
+
+                        result.className = 'ms-2 small ' + ((data.miss > 0) ? 'text-warning' : 'text-success');
+                        result.textContent = libelles.resultat
+                            .replace('%1$s', data.hit)
+                            .replace('%2$s', data.miss)
+                            .replace('%3$s', data.sampled);
+                    })
+                    .catch(function () {
+                        btn.disabled = false;
+                        result.className = 'ms-2 small text-danger';
+                        result.textContent = libelles.error;
+                    });
+            });
+        })();
+        </script>
+
         <hr>
 
         <?php $purges   = $diag['purges']; ?>

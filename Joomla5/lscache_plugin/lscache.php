@@ -61,6 +61,9 @@ class plgSystemLSCache extends CMSPlugin {
     // Passes du rebuild rejouees par le rechauffage de --purge-changed : celles vues dans
     // l'historique sur huit jours, pour qu'une passe hebdomadaire compte aussi.
     const REWARM_PASS_WINDOW = 691200;
+    // Echantillon du bouton "Verifier maintenant" : reponse attendue en 1-2 s, pas un
+    // audit complet. Voir liveCacheCheck().
+    const LIVE_CHECK_SAMPLE = 5;
     const CATEGORY_CONTEXTS = array('com_categories.category', 'com_banners.category', 'com_contact.category', 'com_content.category', 'com_newsfeeds.category', 'com_users.category',
         'com_categories.categories', 'com_banners.categories', 'com_contact.categories', 'com_content.categories', 'com_newsfeeds.categories', 'com_users.categories');
     const CONTENT_CONTEXTS = array('com_content.article', 'com_content.featured', 'com_content.form', 'com_banner.banner', 'com_contact.contact', 'com_contact.form', 'com_newsfeeds.newsfeed', 'com_content');
@@ -704,6 +707,21 @@ class plgSystemLSCache extends CMSPlugin {
     private function getOption($context) {
         $parts = explode(".", $context);
         return $parts[0];
+    }
+
+    /**
+     * Repere, une fois la reponse envoyee, une purge globale LiteSpeed declenchee par un
+     * autre acteur que ce plugin (ex. un bouton "Vider le cache" d'une extension de
+     * nettoyage tierce qui parle directement au serveur LiteSpeed) - voir
+     * LiteSpeedCacheCore::detectExternalPurge() pour le detail du mecanisme et pourquoi
+     * onAfterRespond est le bon moment pour le faire.
+     */
+    public function onAfterRespond() {
+        if (!$this->lscInstance) {
+            return;
+        }
+
+        $this->lscInstance->detectExternalPurge();
     }
 
     public function onContentAfterSave($context, $row, $isNew=false) {
@@ -2149,6 +2167,11 @@ class plgSystemLSCache extends CMSPlugin {
         if (!$this->isAdmin()) {
             return ['status' => 'idle'];
         }
+
+        if ($this->app->getInput()->getInt('checkNow', 0) === 1) {
+            return $this->liveCacheCheck();
+        }
+
         $progressFile = $this->getProgressFile();
 
         if ($this->app->getInput()->getInt('dismiss', 0) === 1) {
@@ -2194,6 +2217,50 @@ class plgSystemLSCache extends CMSPlugin {
         $json['lastPurge'] = (is_array($purge) && !empty($purge['purged'])) ? (int) $purge['purged'] : 0;
 
         return $json;
+    }
+
+    /**
+     * Sonde en direct un petit échantillon de pages réelles et lit leur en-tête
+     * X-LiteSpeed-Cache, pour vérifier l'état RÉEL du cache à l'instant du clic.
+     *
+     * Complète l'encadré de diagnostic (couverture déclarative, déduite de l'historique
+     * de ce plugin) : ce dernier ne peut rien savoir d'une purge passée par un canal
+     * hors de son contrôle (ex. suppression directe des fichiers cache sur disque par
+     * une extension tierce - voir LiteSpeedCacheCore::detectExternalPurge(), qui ne
+     * couvre que les purges par en-tête HTTP). Comme le rappelle checkCacheCoverage(),
+     * LiteSpeed n'expose aucune API interrogeable depuis PHP : le seul signal fiable
+     * est l'en-tête de chaque réponse.
+     *
+     * Échantillon volontairement réduit aux pages du menu (pas au catalogue VirtueMart
+     * complet, potentiellement des milliers d'URLs à pré-router) : ce bouton doit
+     * répondre en 1-2 s, ce n'est pas un remplacement de la reconstruction complète.
+     */
+    private function liveCacheCheck() {
+        if (!$this->cacheEnabled) {
+            return array('status' => 'error', 'error' => Text::_('COM_LSCACHE_PLUGIN_TURNONFIRST'));
+        }
+
+        $urls = array();
+        foreach (array_column($this->getSiteMap(), 'path') as $path) {
+            try {
+                $routed = $this->routeCrawlPath($path);
+            } catch (\Throwable $e) {
+                continue;
+            }
+            if ($routed !== null) {
+                $urls[] = $routed;
+            }
+        }
+
+        if (empty($urls)) {
+            return array('status' => 'error', 'error' => Text::_('COM_LSCACHE_ERR_NO_URLS'));
+        }
+
+        $stats = $this->checkCacheCoverage($urls, self::LIVE_CHECK_SAMPLE);
+        $stats['status']  = 'ok';
+        $stats['checked'] = time();
+
+        return $stats;
     }
 
     /**

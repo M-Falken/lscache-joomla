@@ -180,6 +180,39 @@ class LiteSpeedCacheCore extends LiteSpeedCacheBase
     }
 
     /**
+     * Repere une purge globale envoyee par un autre acteur que ce plugin - typiquement
+     * une extension de nettoyage de cache (ex. Regular Labs Cache Cleaner) dont le
+     * bouton "Vider le cache" parle a LiteSpeed directement, sans passer par
+     * purgeAllPublic() ci-dessus - et la consigne comme si c'etait la sienne.
+     *
+     * Sans cela, com_lscache continue d'annoncer un cache "chaud" d'apres son propre
+     * historique alors que le cache disque vient d'etre entierement vide par ailleurs :
+     * l'encadre de diagnostic ne lit que ce que CE plugin a purge lui-meme.
+     *
+     * Le jocker '*' est le signal fiable : ce plugin ne l'emet jamais (purgeAllPublic()
+     * ci-dessus scope toujours sur site_only_tag), donc un en-tete X-LiteSpeed-Purge qui
+     * le porte ne peut venir que d'ailleurs. headers_list() reste exploitable a l'appel :
+     * voir plgSystemLSCache::onAfterRespond(), qui se declenche juste apres l'envoi de la
+     * reponse, dans le meme processus PHP.
+     */
+    public function detectExternalPurge(): void
+    {
+        foreach (headers_list() as $entete) {
+            if (stripos($entete, self::CACHE_PURGE) !== 0) {
+                continue;
+            }
+
+            $valeur = substr($entete, strlen(self::CACHE_PURGE));
+            $tags   = array_map('trim', explode(',', $valeur));
+
+            if (in_array('*', $tags, true)) {
+                $this->recordPurgeAll();
+                return;
+            }
+        }
+    }
+
+    /**
      *
      *  purge all private cache of this session
      *

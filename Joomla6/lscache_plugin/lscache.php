@@ -881,7 +881,7 @@ class plgSystemLSCache extends CMSPlugin {
             $this->purgeObject->tags[] = $purgeTags;
             $this->purgeObject->option = $option;
             $this->purgeObject->idField = 'id';
-            $this->purgeObject->ids[] = $row->id;
+            $this->purgeObject->ids[] = $row["id"];
             return;
         }
         if ($this->componentHelper->supportComponent($option)) {

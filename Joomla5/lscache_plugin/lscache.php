@@ -2294,6 +2294,29 @@ class plgSystemLSCache extends CMSPlugin {
     }
 
     /**
+     * Composants dont les URLs s'ajoutent au crawl complet.
+     *
+     * Joomla5 a reçu de l'amont un champ « recacheComponents » multiple, alors que le
+     * code lisait historiquement « recacheComponent » au singulier (clé que le formulaire
+     * Joomla6 enregistre encore). Joomla ne réenregistre que les champs présents dans le
+     * formulaire : en Joomla5, le premier enregistrement de la config fait disparaître
+     * l'ancienne clé, et le formulaire affiche « Please Select » tant qu'elle seule est
+     * renseignée. On lit donc les deux, en testant le vide et pas seulement l'absence de
+     * clé, pour que collectCrawlUrls() et recacheAction() crawlent la même liste.
+     *
+     * @return  string[]  Éléments des composants (ex. com_virtuemart), sans valeur vide
+     */
+    private function getRecacheComponents() {
+        // « Please Select » s'enregistre comme une valeur vide : filtrer avant de tester.
+        $components = array_values(array_filter((array) $this->settings->get('recacheComponents', array())));
+        if (empty($components)) {
+            $components = array_values(array_filter((array) $this->settings->get('recacheComponent', false)));
+        }
+
+        return $components;
+    }
+
+    /**
      * Collecte et pré-route les URLs à réchauffer.
      *
      * Le pré-routage a lieu ici, tant que Joomla est complètement initialisé :
@@ -2307,23 +2330,9 @@ class plgSystemLSCache extends CMSPlugin {
             $menus   = $this->getSiteMap();
             $rawList = array_column($menus, 'path');
 
-            // Joomla5 a reçu de l'amont un champ « recacheComponents » multiple, alors que le
-            // code lit historiquement « recacheComponent » au singulier. Sans repli le réglage
-            // reste sans effet, et le formulaire affiche « Please Select » puisque la valeur
-            // enregistrée vit sous l'ancienne clé : un simple enregistrement de la config
-            // suffirait alors à retirer silencieusement les URLs du composant du crawl.
-            // On teste donc le vide, pas seulement l'absence de clé.
-            $components = $this->settings->get('recacheComponents', null);
-            if (empty($components)) {
-                $components = $this->settings->get('recacheComponent', false);
-            }
-
             $menuCount = count($rawList);
             $resolved  = array();
-            foreach ((array) $components as $component) {
-                if (empty($component)) {
-                    continue;
-                }
+            foreach ($this->getRecacheComponents() as $component) {
                 $comUrls = $this->componentHelper->getComMap($component);
                 $resolved[$component] = count($comUrls);
                 $rawList = array_merge($comUrls, $rawList);
@@ -3716,10 +3725,9 @@ class plgSystemLSCache extends CMSPlugin {
             $urls = array_map(function($menu) {
                 return $menu->path;
             }, $menus);
-            $recacheComponent = $this->settings->get('recacheComponent', false);
-            if ($recacheComponent) {
+            foreach ($this->getRecacheComponents() as $recacheComponent) {
                 $compUrls = $this->componentHelper->getComMap($recacheComponent);
-                $urls = array_merge($compUrls,$urls);
+                $urls = array_merge($compUrls, $urls);
             }
         } else if ($this->purgeObject->autoRecache > 0) {
             $urls = $this->purgeObject->urls;

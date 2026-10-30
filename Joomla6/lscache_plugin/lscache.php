@@ -3144,10 +3144,14 @@ class plgSystemLSCache extends CMSPlugin {
         curl_setopt($ch, CURLOPT_ENCODING, "gzip");
         curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
         curl_setopt($ch, CURLOPT_REFERER, $root . '/');
+        // Surtout pas d'en-tete X-LSCACHE : LiteSpeed le traite comme une requete de
+        // debogage et range la page en cache SANS traiter l'ESI. Chaque page chauffee
+        // par le crawler servait ensuite ses <esi:include> bruts aux visiteurs - les
+        // modules ESI (liste d'envies, comparateur) disparaissaient. Mesure MGF du
+        // 30/10/2026 : meme URL, seul cet en-tete change le resultat.
         curl_setopt($ch, CURLOPT_HTTPHEADER, array(
             'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language: ' . $this->crawlLanguageTag(),
-            'X-LSCACHE: 1',
         ));
         return $ch;
     }

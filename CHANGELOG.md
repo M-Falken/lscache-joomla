@@ -5,6 +5,46 @@ L'historique Git fait foi pour le détail de chaque changement ; ce fichier ne r
 qui demande une action de la part de l'administrateur du site (changement de comportement,
 migration d'un réglage).
 
+## 1.5.40 (2026-11-05)
+
+### Action requise si votre gestionnaire de consentement modifie le HTML côté serveur
+
+Une page rendue pour une session qui a accepté des cookies pouvait partir dans le cache public.
+Le visiteur suivant recevait alors un consentement déjà accordé et des cases cochées, avant tout
+choix de sa part. Purger ne suffit pas : le prochain miss d'une telle session recrée la copie.
+
+Nouveau champ **« Sessions dont les pages ne sont pas stockées »** (`consentNoCacheSession`,
+onglet Avancé) : liste de paires `clé=valeur` séparées par des virgules. **Le champ est vide par
+défaut, et le mécanisme reste alors désactivé : sans action de votre part, ce défaut n'est pas
+corrigé.** Pour com_gdpr, indiquez les catégories non verrouillées :
+
+```
+gdpr_cookie_category_disabled_2=-1,gdpr_cookie_category_disabled_3=-1,gdpr_cookie_category_disabled_4=-1
+```
+
+Si le bouton de refus de com_gdpr est réglé sur « hard », ajoutez
+`gdpr_generic_cookie_consent_denyall=1` par précaution (cas non mesuré). Enregistrez, puis purgez tout le cache LiteSpeed.
+
+- **Coût :** ces sessions n'alimentent plus le cache. Elles reçoivent toujours les pages déjà en
+  cache, mais font un miss sur les autres. Une couverture complète du rebuild limite cet effet.
+- **Ne pas combiner, pour les mêmes états, avec « Cookies portant une décision de consentement » :**
+  le compartiment de ces visiteurs ne serait jamais stocké et ils feraient toujours un miss.
+- **Limite :** ce champ lit la session, pas les cookies. Si votre gestionnaire change le HTML selon
+  un cookie, comparez une page rendue avec ce cookie à une page rendue sans.
+
+### Identifiant de session retiré des pages mises en cache (sans action)
+
+com_gdpr écrit le nom et la valeur du cookie de session dans un script de la page. La copie en
+cache exposait donc un cookie de session complet à tous les visiteurs servis depuis cette copie.
+L'identifiant de la session courante est désormais retiré de toute page stockée, quelle que soit
+l'extension qui l'a écrit. Les pages non mises en cache et les blocs ESI ne sont pas concernés.
+
+Avec com_gdpr, `gdprJSessVal` devient vide dans ces pages. Vérifiez deux réglages de com_gdpr :
+
+- `show_consent_id` : s'il est actif, l'identifiant de consentement affiché sera vide ;
+- `always_check_categories_session` : s'il est inactif, les choix enregistrés dans le navigateur
+  seront renvoyés au serveur moins souvent.
+
 ## 1.5.38 (2026-09-18)
 
 ### Correctif définitif : le champ consentement ne s'enregistrait jamais vide

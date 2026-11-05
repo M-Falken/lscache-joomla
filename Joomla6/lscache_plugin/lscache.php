@@ -328,6 +328,11 @@ class plgSystemLSCache extends CMSPlugin {
             $this->pageCachable = false;
         } else if ($this->isExcluded()) {
             $this->pageCachable = false;
+        } else if ($this->hasConsentPersonalizedSession()) {
+            // Au routage et pas au rendu : à ce stade de onAfterRender(), les modules
+            // seraient déjà remplacés par <esi:include> et la sortie anticipée sauterait
+            // esi=on, si bien que le visiteur recevrait les balises brutes.
+            $this->pageCachable = false;
         }
 
         if (!$this->pageCachable && isset($_SERVER['HTTP_USER_AGENT'])) {
@@ -689,6 +694,13 @@ class plgSystemLSCache extends CMSPlugin {
         // silently breaking AJAX calls that read it. The token is a session-specific
         // 32-char hash, so this replacement cannot produce false positives.
         $data = str_replace('"' . $token . '"', '"lscache_formtoken"', $data);
+        // Same for the session id: an extension printing it in the page (com_gdpr writes
+        // both the session cookie name and its value in an inline script) would publish
+        // a usable session cookie to every visitor served from this copy.
+        $sessionId = (string) $this->app->getSession()->getId();
+        if ($sessionId !== '') {
+            $data = str_replace($sessionId, '', $data);
+        }
         $this->app->setBody($data);
 
         if ($cacheTimeout == 0) {
@@ -1822,6 +1834,42 @@ class plgSystemLSCache extends CMSPlugin {
 
         foreach ($names as $name) {
             if (!empty($_COOKIE[$name])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * La session courante porte-t-elle un état qui personnalise le rendu de la page ?
+     *
+     * Une telle page ne doit pas partir dans le compartiment public : le visiteur suivant
+     * recevrait un rendu décidé pour quelqu'un d'autre (consentement déjà accordé, cases
+     * cochées). Les paires clé=valeur viennent de la configuration : ce plugin n'a pas à
+     * connaître le gestionnaire de consentement installé. Champ vide = désactivé. Voir
+     * hasConsentDecision() pour la raison du default="" dans config.xml.
+     *
+     * Une entrée sans valeur est ignorée : (string) null === '' désignerait toutes les
+     * sessions qui n'ont pas la clé, et plus aucune page ne serait mise en cache.
+     *
+     * Le transtypage est nécessaire : une session peut stocker un entier, la configuration
+     * ne contient que des chaînes.
+     */
+    private function hasConsentPersonalizedSession() {
+        $configured = (string) $this->settings->get('consentNoCacheSession', '');
+        if (trim($configured) === '') {
+            return false;
+        }
+
+        $session = $this->app->getSession();
+
+        foreach (explode(',', $configured) as $entry) {
+            $parts = array_map('trim', explode('=', $entry, 2));
+            if ((count($parts) !== 2) || ($parts[0] === '') || ($parts[1] === '')) {
+                continue;
+            }
+            if ((string) $session->get($parts[0]) === $parts[1]) {
                 return true;
             }
         }

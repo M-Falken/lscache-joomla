@@ -5,6 +5,25 @@ L'historique Git fait foi pour le détail de chaque changement ; ce fichier ne r
 qui demande une action de la part de l'administrateur du site (changement de comportement,
 migration d'un réglage).
 
+## 1.5.42 (2026-11-06)
+
+### Action requise : purger le cache après la mise à jour
+
+Pour les visiteurs non connectés, les pages VirtueMart liées à la session pouvaient entrer dans
+le cache public : panier, compte client, liste des commandes et confirmation de commande. C'était
+le cas pour leurs URL non SEF (`index.php?option=com_virtuemart&view=cart`, `view=user`,
+`view=orders`, `view=cart&layout=orderdone`), quel que soit l'Itemid, et pour les routes
+`/component/virtuemart/…`. Seuls les éléments de menu ajoutés aux exclusions protégeaient les URL
+SEF. Le premier visiteur qui provoquait la mise en cache publiait son panier, son formulaire de
+commande ou sa confirmation à tous les suivants.
+
+Ces vues, ainsi que `invoice`, `pluginresponse` et `vmplg`, ne sont plus jamais mises en cache.
+C'est aussi le cas de toute requête VirtueMart qui porte une tâche (`task`), sauf les
+formulaires publics `askquestion` et `recommend`.
+
+Les copies déjà en cache restent servies jusqu'à leur expiration. Purgez tout le cache LiteSpeed
+après l'installation.
+
 ## 1.5.41 (2026-11-06)
 
 ### Blocs ESI traités sur les pages non mises en cache (sans action)

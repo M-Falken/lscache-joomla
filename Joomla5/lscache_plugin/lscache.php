@@ -330,9 +330,9 @@ class plgSystemLSCache extends CMSPlugin {
         } else if ($this->isExcluded()) {
             $this->pageCachable = false;
         } else if ($this->hasConsentPersonalizedSession()) {
-            // Au routage et pas au rendu : à ce stade de onAfterRender(), les modules
-            // seraient déjà remplacés par <esi:include> et la sortie anticipée sauterait
-            // esi=on, si bien que le visiteur recevrait les balises brutes.
+            // Au routage et pas au rendu : les modules sont alors rendus en ligne pour
+            // cette session, au lieu d'être convertis en <esi:include> par
+            // onAfterRenderModule(), qui ne le fait que pour une page à mettre en cache.
             $this->pageCachable = false;
         }
 
@@ -607,17 +607,20 @@ class plgSystemLSCache extends CMSPlugin {
         }
 
         if (!$this->pageCachable) {
+            $this->sendEsiOnly();
             return;
         }
 
         $httpcode = $this->app->getResponse()->getStatusCode();
         if ($httpcode > 201) {
             $this->log("Http Response Code Not Cachable:" . $httpcode);
+            $this->sendEsiOnly();
             return;
         }
 
         $headers = $this->app->getHeaders();
         if(isset($headers[0]) && isset($headers[0]['name']) && ($headers[0]['name']=='status') && (strpos($headers[0]['value'],'200')===FALSE) && (strpos($headers[0]['value'],'201')===FALSE)){
+            $this->sendEsiOnly();
             return;
         }
 
@@ -650,6 +653,7 @@ class plgSystemLSCache extends CMSPlugin {
 
         if (empty($option) && !empty($this->menuItem)) {
             if ($this->menuItem && !$this->menuItem->home) {
+                $this->sendEsiOnly();
                 return;
             }
         } else if (isset($id) && in_array($option, array('com_content', 'com_contact', 'com_banners', 'com_newsfeed', 'com_categories', 'com_users'))) {
@@ -707,6 +711,7 @@ class plgSystemLSCache extends CMSPlugin {
         $this->app->setBody($data);
 
         if ($cacheTimeout == 0) {
+            $this->sendEsiOnly();
             return;
         }
 
@@ -3853,6 +3858,47 @@ class plgSystemLSCache extends CMSPlugin {
     protected function esiTokenBlock(){
         $block = '<esi:include src="index.php?option=com_lscache&moduleid=-2" cache-control="private,no-vary" cache-tag="token" />' . PHP_EOL;
         return $block;
+    }
+
+    /**
+     * Fait traiter les <esi:include> d'une page que ce plugin ne met pas en cache.
+     *
+     * Sans esi=on, LiteSpeed sert les balises telles quelles. cachePublic() ajoute esi=on
+     * pour une page stockée, mais les sorties anticipées de onAfterRender() n'y passent pas,
+     * alors que les modules ont déjà été convertis en blocs ESI.
+     *
+     * Un en-tête X-LiteSpeed-Cache-Control déjà posé est conservé et complété sur une
+     * seule ligne. C'est le cas d'une sous-requête ESI rendue via esitemplate : son
+     * public,max-age=… envoyé dans onAfterDispatch() ne doit pas devenir no-cache.
+     * Un en-tête mis en file par $app->setHeader() est complété dans la file :
+     * sendHeaders() l'émet après onAfterRender() en remplaçant celui de header().
+     * Repris de la PR upstream #98 (AndySDH), avec ces deux compléments.
+     */
+    protected function sendEsiOnly() {
+        if (!$this->esion || headers_sent()) {
+            return;
+        }
+
+        foreach ($this->app->getHeaders() as $header) {
+            if (strcasecmp((string) $header['name'], 'X-LiteSpeed-Cache-Control') === 0) {
+                if (stripos((string) $header['value'], 'esi=on') === false) {
+                    $this->app->setHeader('X-LiteSpeed-Cache-Control', $header['value'] . ',esi=on', true);
+                }
+                return;
+            }
+        }
+
+        foreach (headers_list() as $header) {
+            if (stripos($header, 'X-LiteSpeed-Cache-Control:') === 0) {
+                $value = trim(substr($header, strlen('X-LiteSpeed-Cache-Control:')));
+                if (stripos($value, 'esi=on') === false) {
+                    header('X-LiteSpeed-Cache-Control: ' . $value . ',esi=on');
+                }
+                return;
+            }
+        }
+
+        header('X-LiteSpeed-Cache-Control: no-cache,esi=on');
     }
 
     protected function isAdmin(){

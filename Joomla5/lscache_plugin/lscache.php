@@ -67,6 +67,12 @@ class plgSystemLSCache extends CMSPlugin {
     const CATEGORY_CONTEXTS = array('com_categories.category', 'com_banners.category', 'com_contact.category', 'com_content.category', 'com_newsfeeds.category', 'com_users.category',
         'com_categories.categories', 'com_banners.categories', 'com_contact.categories', 'com_content.categories', 'com_newsfeeds.categories', 'com_users.categories');
     const CONTENT_CONTEXTS = array('com_content.article', 'com_content.featured', 'com_content.form', 'com_banner.banner', 'com_contact.contact', 'com_contact.form', 'com_newsfeeds.newsfeed', 'com_content');
+    // Vues VirtueMart rendues depuis la session du visiteur (panier, compte, commandes,
+    // retours de paiement) : jamais dans le cache public. Voir isVirtueMartPrivateRequest().
+    const VM_PRIVATE_VIEWS = array('cart', 'user', 'orders', 'invoice', 'pluginresponse', 'vmplg');
+    // Taches VirtueMart qui ne font qu'afficher un formulaire public (popup de la fiche
+    // produit, envoi en POST) : elles restent cachables, comme avant.
+    const VM_CACHABLE_TASKS = array('askquestion', 'recommend');
 
     protected $app;
     protected $cacheEnabled;
@@ -328,6 +334,8 @@ class plgSystemLSCache extends CMSPlugin {
         } else if ($app->get('offline', '0')){
             $this->pageCachable = false;
         } else if ($this->isExcluded()) {
+            $this->pageCachable = false;
+        } else if ($this->isVirtueMartPrivateRequest()) {
             $this->pageCachable = false;
         } else if ($this->hasConsentPersonalizedSession()) {
             // Au routage et pas au rendu : les modules sont alors rendus en ligne pour
@@ -1508,6 +1516,35 @@ class plgSystemLSCache extends CMSPlugin {
         if($link) { $content .= '   ' . $link; }
 
         Log::add($content, $logLevel, 'LiteSpeedCache');
+    }
+
+    /**
+     * Requete VirtueMart dont le rendu depend de la session du visiteur.
+     *
+     * Le gestionnaire LSCacheComponentVirtueMart exclut deja cart et user pour les invites,
+     * mais son exclusion ne s'applique pas sur les GET d'un invite sans cookie : constate le
+     * 2026-11-06 sur MGF, ou index.php?option=com_virtuemart&view=cart, view=user,
+     * view=orders, layout=orderdone et /component/virtuemart/user partaient en cache public.
+     * Seuls les menus de excludeMenus protegeaient les URL SEF. Le premier invite qui
+     * provoquait le miss publiait alors son panier, son formulaire de commande ou sa
+     * confirmation de commande.
+     *
+     * La decision lit donc la requete routee, quels que soient le menu actif, l'Itemid et
+     * l'enregistrement du gestionnaire. Toute requete VirtueMart portant une tache (ajout au
+     * panier, actions de compte) est aussi exclue : servie depuis le cache, la tache ne
+     * serait jamais executee. Exception : les taches de VM_CACHABLE_TASKS, qui n'affichent
+     * qu'un formulaire public et que les bots suivent en masse depuis les fiches produit.
+     */
+    private function isVirtueMartPrivateRequest() {
+        $input = $this->app->getInput();
+        if ($input->getCmd('option', '') !== 'com_virtuemart') {
+            return false;
+        }
+        if (in_array($input->getCmd('view', ''), self::VM_PRIVATE_VIEWS, true)) {
+            return true;
+        }
+        $task = strtolower($input->getCmd('task', ''));
+        return ($task !== '') && (!in_array($task, self::VM_CACHABLE_TASKS, true));
     }
 
     protected function isOptionExcluded($option) {

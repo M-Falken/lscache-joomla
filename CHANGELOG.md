@@ -5,6 +5,20 @@ L'historique Git fait foi pour le détail de chaque changement ; ce fichier ne r
 qui demande une action de la part de l'administrateur du site (changement de comportement,
 migration d'un réglage).
 
+## 1.5.41 (2026-11-06)
+
+### Blocs ESI traités sur les pages non mises en cache (sans action)
+
+Quand le plugin renonçait à stocker une page après le rendu des modules (code HTTP autre que
+200/201, élément de menu sans composant, durée de cache à 0, ou toute page non cachable en mode
+ESI « Toujours activé »), il n'envoyait pas `esi=on`. LiteSpeed laissait alors brutes les balises
+`<esi:include>` présentes dans le HTML, et les modules concernés n'apparaissaient pas.
+
+Ces pages reçoivent désormais `X-LiteSpeed-Cache-Control: no-cache,esi=on`. Elles ne sont
+toujours pas stockées. Si un en-tête `X-LiteSpeed-Cache-Control` a déjà été posé (par le plugin
+pour un bloc ESI, ou par une autre extension), il est conservé et seul `esi=on` y est ajouté.
+Repris de la PR upstream #98.
+
 ## 1.5.40 (2026-11-05)
 
 ### Action requise si votre gestionnaire de consentement modifie le HTML côté serveur

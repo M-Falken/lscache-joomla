@@ -11,7 +11,6 @@ Joomla6/package/lscache_J6_v*_b*.zip
 *.code-workspace
 
 # Editor / IDE
-.claude/
 .vscode/
 .idea/
 *.swp

@@ -494,7 +494,7 @@ class LSCacheVaryDiagnostic
      * Duree lisible : secondes sous la minute, minutes et secondes au-dela.
      *
      * L'arrondi a la minute affichait « une reconstruction de 0 minutes » sur tout site
-     * dont la reconstruction dure moins de 30 s (Emaging : 275 pages).
+     * dont la reconstruction dure moins de 30 s (cas observe : un site de 275 pages).
      */
     public static function formatDuration($seconds)
     {
@@ -601,7 +601,7 @@ class LSCacheVaryDiagnostic
 
             // Les cinq plus recentes, puis jusqu'a trois purges automatiques plus anciennes :
             // sans elles, une serie de purges manuelles pousse hors de la liste celles que
-            // l'alerte denonce (Emaging, 14/09/2026 : alerte sur 4 purges depuis une page
+            // l'alerte denonce (cas observe le 14/09/2026 : alerte sur 4 purges depuis une page
             // publique, liste ne montrant que des purges de l'administration).
             if (count($entries) < 5) {
                 $entries[] = $entry;
@@ -623,7 +623,7 @@ class LSCacheVaryDiagnostic
         // Moyenne sur les seules purges AUTOMATIQUES, declenchees depuis une page publique.
         // Une purge de l'administration est une decision humaine ponctuelle : melangees au
         // calcul, huit purges manuelles en une demi-heure faisaient annoncer « une purge
-        // toutes les 3,4 h » sur Emaging (14/09/2026), ou JSpeed ne purgeait qu'une fois
+        // toutes les 3,4 h » sur un site de production (14/09/2026), ou JSpeed ne purgeait qu'une fois
         // par jour. Des purges automatiques rapprochees comptent pour un seul evenement.
         //
         // Ecarts reellement observes, et non fenetre fixe : l'historique est plafonne a
@@ -644,7 +644,7 @@ class LSCacheVaryDiagnostic
 
         // Cout d'une purge : la duree d'une reconstruction a froid, soit la plus longue des
         // passes terminees de l'historique. La derniere passe ne convient pas : sur un cache
-        // deja chaud elle n'enchaine que des hits (Emaging, 14/09/2026 : passe « Cookies
+        // deja chaud elle n'enchaine que des hits (cas observe le 14/09/2026 : passe « Cookies
         // refuses » de 1 s, annoncee comme le cout d'une purge qui oblige pourtant a tout
         // regenerer).
         $rebuild = null;
